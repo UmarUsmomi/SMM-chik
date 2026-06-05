@@ -424,6 +424,37 @@
             </div>
         </section>
     </div>
+
+    <!-- Rejected Items Archive -->
+    <section class="card" style="margin-top: 2rem;">
+        <h2 class="card-title" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleArchive()">
+            <span>📁 Архив отсеянных новостей <span style="font-size: 0.95rem; color: var(--text-muted); font-weight: normal;">(Последние 10 отклонённых AI)</span></span>
+            <span id="archive-toggle-icon" style="transition: transform 0.3s; font-size: 0.85rem;">▼</span>
+        </h2>
+        
+        <div id="archive-content" style="display: none; margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <div class="queue-list">
+                {% if not rejected_items %}
+                    <p style="color: var(--text-muted); text-align: center; padding: 2rem;">Архив пуст.</p>
+                {% else %}
+                    {% for item in rejected_items %}
+                        <div class="queue-item" style="opacity: 0.75;">
+                            <div class="queue-header">
+                                <span class="queue-title" style="text-decoration: line-through; color: var(--text-muted);">{{ item.title }}</span>
+                                <span class="queue-score" style="background: rgba(217, 4, 41, 0.15); border: 1px solid var(--accent-red); color: var(--accent-red);">{{ item.score }}/100</span>
+                            </div>
+                            <div class="queue-meta">
+                                <span>Источник: {{ item.source }}</span> • <span>Причина: <strong style="color: #ffb703;">{{ item.score_reason }}</strong></span>
+                            </div>
+                            {% if item.url %}
+                                <div style="margin-top: 0.5rem;"><a href="{{ item.url }}" target="_blank" style="color: var(--secondary-glow); font-size: 0.85rem; text-decoration: none;">🔗 Ссылка на источник</a></div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+    </section>
 </div>
 
 <div class="alert" id="toast">Действие выполнено успешно!</div>
@@ -499,6 +530,18 @@
             }
         } catch (err) {
             console.error(err);
+        }
+    }
+
+    function toggleArchive() {
+        const content = document.getElementById('archive-content');
+        const icon = document.getElementById('archive-toggle-icon');
+        if (content.style.display === 'none') {
+            content.style.display = 'block';
+            icon.style.transform = 'rotate(180deg)';
+        } else {
+            content.style.display = 'none';
+            icon.style.transform = 'rotate(0deg)';
         }
     }
 

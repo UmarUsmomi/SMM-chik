@@ -218,6 +218,7 @@ async def dashboard_view(request: Request):
 
     is_paused = db.get_setting("is_paused", "false") == "true"
     queue_items = db.get_queue(status='pending_review', limit=15)
+    rejected_items = db.get_queue(status='rejected', limit=10)
     
     chart_data = db.get_publication_stats()
     if not chart_data:
@@ -234,6 +235,7 @@ async def dashboard_view(request: Request):
             "stats": stats,
             "is_paused": is_paused,
             "queue_items": queue_items,
+            "rejected_items": rejected_items,
             "chart_labels": chart_labels,
             "chart_values": chart_values
         }
