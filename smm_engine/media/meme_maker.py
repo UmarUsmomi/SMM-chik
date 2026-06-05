@@ -5,7 +5,7 @@ import random
 from typing import Dict, Any, Optional
 import google.generativeai as genai
 
-from smm_engine.config import IMGFLIP_USERNAME, IMGFLIP_PASSWORD, GEMINI_API_KEY
+from smm_engine.config import IMGFLIP_USERNAME, IMGFLIP_PASSWORD, GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,7 @@ class MemeMaker:
     def __init__(self):
         self.username = IMGFLIP_USERNAME
         self.password = IMGFLIP_PASSWORD
+        self.model_name = GEMINI_MODEL
         self.enabled = bool(self.username and self.password and GEMINI_API_KEY)
         if not self.enabled:
             logger.warning("Imgflip credentials or Gemini API key missing. Meme Maker is running in dry-run mode.")
@@ -101,7 +102,7 @@ Return ONLY a JSON object:
 }}
 """
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel(self.model_name)
             response = model.generate_content(
                 prompt,
                 generation_config={

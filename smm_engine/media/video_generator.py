@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import google.generativeai as genai
 
-from smm_engine.config import BASE_DIR, GEMINI_API_KEY
+from smm_engine.config import BASE_DIR, GEMINI_API_KEY, GEMINI_MODEL
 from smm_engine.media.image_handler import ImageGenerator
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,7 @@ class VideoGenerator:
         self.image_gen = ImageGenerator()
         self.temp_dir = BASE_DIR / "temp_media"
         self.temp_dir.mkdir(exist_ok=True)
+        self.model_name = GEMINI_MODEL
         self.enabled = bool(GEMINI_API_KEY)
 
     async def generate_reel(self, news_title: str, news_text: str) -> Optional[Path]:
@@ -107,7 +108,7 @@ Return ONLY a JSON array of 3 objects in this format:
 ]
 """
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel(self.model_name)
             response = model.generate_content(
                 prompt,
                 generation_config={

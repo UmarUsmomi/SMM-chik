@@ -3,13 +3,14 @@ import logging
 from typing import Optional, Dict
 import google.generativeai as genai
 
-from smm_engine.config import GEMINI_API_KEY
+from smm_engine.config import GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
 
 class EngagementGenerator:
     def __init__(self):
         self.enabled = bool(GEMINI_API_KEY)
+        self.model_name = GEMINI_MODEL
 
     async def get_programming_joke(self) -> Optional[str]:
         """Fetches a programming joke and translates it to funny Russian using Gemini"""
@@ -74,7 +75,7 @@ Joke:
 Return ONLY the adapted Russian joke text. No extra text or explanations.
 """
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel(self.model_name)
             response = model.generate_content(prompt, generation_config={"temperature": 0.8})
             return response.text.strip()
         except Exception as e:
@@ -96,7 +97,7 @@ Format the output as: «Текст цитаты» — Автор
 Return ONLY the formatted Russian quote. No extra text or explanations.
 """
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel(self.model_name)
             response = model.generate_content(prompt, generation_config={"temperature": 0.3})
             return response.text.strip()
         except Exception as e:

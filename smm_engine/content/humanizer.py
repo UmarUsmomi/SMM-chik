@@ -1,7 +1,7 @@
 import logging
 import google.generativeai as genai
 
-from smm_engine.config import GEMINI_API_KEY
+from smm_engine.config import GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ Below are the 30 patterns of AI-written text that you MUST detect and fix. If yo
 
 class TextHumanizer:
     def __init__(self):
-        self.model_name = "gemini-1.5-flash"
+        self.model_name = GEMINI_MODEL
         self.enabled = bool(GEMINI_API_KEY)
 
     async def humanize(self, text: str) -> str:
