@@ -461,13 +461,26 @@
 
 <script>
     // Toast notifications
-    function showToast(text) {
+    function showToast(text, type = 'info') {
         const toast = document.getElementById('toast');
         toast.innerText = text;
+        
+        // Dynamic border color based on notification type
+        if (type === 'error') {
+            toast.style.borderLeftColor = 'var(--accent-red)';
+        } else if (type === 'success') {
+            toast.style.borderLeftColor = 'var(--accent-green)';
+        } else {
+            toast.style.borderLeftColor = 'var(--primary-glow)';
+        }
+        
         toast.style.display = 'block';
-        setTimeout(() => {
+        if (window.toastTimeout) {
+            clearTimeout(window.toastTimeout);
+        }
+        window.toastTimeout = setTimeout(() => {
             toast.style.display = 'none';
-        }, 3000);
+        }, 4000);
     }
 
     // Toggle auto-publish
@@ -480,15 +493,21 @@
                 body: JSON.stringify({ active: active })
             });
             if (resp.ok) {
-                showToast(active ? "Автопубликация активирована" : "Автопубликация приостановлена");
+                showToast(active ? "Автопубликация активирована" : "Автопубликация приостановлена", "success");
+            } else {
+                showToast("Ошибка при переключении режима", "error");
             }
         } catch (err) {
             console.error(err);
+            showToast("Ошибка соединения с сервером", "error");
         }
     });
 
     // Moderate Queue Items
     async function moderateItem(id, action) {
+        if (action === 'approve') {
+            showToast("Отправка в канал... Пожалуйста, подождите", "info");
+        }
         try {
             const resp = await fetch(`/api/moderate/${id}`, {
                 method: 'POST',
@@ -509,27 +528,35 @@
                 pendingCount.innerText = Math.max(0, parseInt(pendingCount.innerText) - 1);
                 if (action === 'approve') {
                     publishedCount.innerText = parseInt(publishedCount.innerText) + 1;
-                    showToast("Пост успешно опубликован!");
+                    showToast("Пост успешно опубликован!", "success");
                 } else {
                     rejectedCount.innerText = parseInt(rejectedCount.innerText) + 1;
-                    showToast("Пост отклонен.");
+                    showToast("Пост отклонен.", "info");
                 }
+            } else {
+                const errData = await resp.json().catch(() => ({}));
+                const errMsg = errData.detail || "Не удалось завершить операцию";
+                showToast("Ошибка: " + errMsg, "error");
             }
         } catch (err) {
             console.error(err);
+            showToast("Ошибка при отправке запроса", "error");
         }
     }
 
     // Force Trigger Pipeline Run
     async function triggerPipeline() {
-        showToast("Запуск парсинга новостей...");
+        showToast("Запуск парсинга новостей...", "info");
         try {
             const resp = await fetch('/api/force-pipeline', { method: 'POST' });
             if (resp.ok) {
-                showToast("Парсинг завершен! Обновите страницу.");
+                showToast("Парсинг запущен в фоновом режиме!", "success");
+            } else {
+                showToast("Ошибка запуска парсера", "error");
             }
         } catch (err) {
             console.error(err);
+            showToast("Ошибка соединения при запуске парсера", "error");
         }
     }
 

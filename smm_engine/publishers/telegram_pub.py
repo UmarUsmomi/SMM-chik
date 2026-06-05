@@ -116,7 +116,11 @@ class TelegramPublisher:
                         bg_path.unlink()
                 except Exception as e:
                     logger.warning(f"Failed to delete temp cover files: {e}")
-                return success
+                
+                if success:
+                    return True
+                
+                logger.warning("Telegram photo publishing failed, falling back to text post...")
         except Exception as e:
             logger.error(f"Failed to publish post with cover, falling back to text: {e}")
             
