@@ -1,0 +1,73 @@
+import pytest
+import os
+from unittest.mock import MagicMock, patch, AsyncMock
+from smm_engine.scrapers.base import NewsItem
+from smm_engine.pipeline import SMMPipeline
+
+@pytest.fixture(autouse=True)
+def setup_test_db(tmp_path):
+    """Sets a temporary sqlite path for tests to avoid cluttering local db"""
+    db_file = tmp_path / "test_smm.db"
+    with patch("smm_engine.storage.database.SQLITE_DB_PATH", str(db_file)):
+        yield str(db_file)
+
+@pytest.mark.asyncio
+async def test_smm_pipeline_run():
+    # 1. Setup mocked outputs
+    mock_scraped = [
+        NewsItem(source="hackernews", source_id="hn_1", title="HackerNews Test Title", url="https://hn.com/1"),
+        NewsItem(source="devto", source_id="dev_2", title="Devto Test Title", url="https://dev.to/2")
+    ]
+    
+    mock_scorer_res = {"total": 90, "reason": "High relevance", "relevance": 30, "freshness": 20, "virality": 20, "uniqueness": 10, "quality": 10}
+    
+    mock_adapted_res = {
+        "title": "Хайповый Заголовок",
+        "text": "Это адаптированный текст поста.\n\n#ии #нейросети\n\nИсточник: https://hn.com/1"
+    }
+
+    # 2. Patch functions
+    with patch("smm_engine.pipeline.run_all_scrapers", new_callable=AsyncMock) as mock_run_scrapers, \
+         patch("smm_engine.pipeline.NewsScorer") as mock_scorer_class, \
+         patch("smm_engine.pipeline.ContentAdapter") as mock_adapter_class, \
+         patch("smm_engine.pipeline.TelegramPublisher") as mock_publisher_class:
+         
+        # Configure mocks
+        mock_run_scrapers.return_value = mock_scraped
+        
+        # Return 95 for HackerNews and 80 for Dev.to
+        mock_scorer_inst = MagicMock()
+        mock_scorer_inst.score_item = AsyncMock(side_effect=lambda item: {
+            "total": 95 if item.source == "hackernews" else 80,
+            "reason": "High relevance",
+            "relevance": 30,
+            "freshness": 20,
+            "virality": 20,
+            "uniqueness": 10,
+            "quality": 15
+        })
+        mock_scorer_class.return_value = mock_scorer_inst
+        
+        mock_adapter_inst = MagicMock()
+        mock_adapter_inst.adapt_news = AsyncMock(return_value=mock_adapted_res)
+        mock_adapter_class.return_value = mock_adapter_inst
+        
+        mock_publisher_inst = MagicMock()
+        mock_publisher_inst.publish_text = AsyncMock(return_value=True)
+        mock_publisher_class.return_value = mock_publisher_inst
+
+        # 3. Instantiate pipeline and run
+        pipeline = SMMPipeline()
+        summary = await pipeline.run()
+
+        # 4. Assert summary results
+        assert summary["scraped"] == 2
+        assert summary["processed"] == 2
+        assert summary["published"] == 1  # Only one best item published per run
+        
+        # Verify db contents
+        queue_items = pipeline.db.get_queue(status='published')
+        assert len(queue_items) == 1
+        assert queue_items[0]["title"] == "HackerNews Test Title"
+        assert queue_items[0]["score"] == 95
+        assert queue_items[0]["adapted_title"] == "Хайповый Заголовок"

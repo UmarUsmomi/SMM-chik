@@ -1,0 +1,49 @@
+# SMM Automator sources configuration
+
+sources:
+  hackernews:
+    enabled: true
+    queries:
+      - "artificial intelligence"
+      - "neural network"
+      - "large language model"
+      - "deep learning"
+      - "machine learning"
+      - "GPU"
+    min_score: 50             # Only stories with points >= 50
+    limit: 20                 # Number of hits per query
+
+  devto:
+    enabled: true
+    tags:
+      - "ai"
+      - "gamedev"
+      - "webdev"
+      - "python"
+    limit: 10                 # Number of articles per tag
+    min_reactions: 10         # Minimum reactions to consider
+
+  steam:
+    enabled: true
+    apps:
+      730: "Counter-Strike 2"
+      570: "Dota 2"
+      1172470: "Apex Legends"
+      2208920: "Assassins Creed Mirage" # just examples
+      1091500: "Cyberpunk 2077"
+    limit: 3                  # News items per game
+
+  github:
+    enabled: true
+    topics:
+      - "ai"
+      - "llm"
+      - "neural-network"
+      - "gamedev"
+    min_stars: 100
+    limit: 5                  # Repos per search query
+
+  gamersnexus:
+    enabled: true
+    rss_url: "https://gamersnexus.net/rss.xml"
+    limit: 5

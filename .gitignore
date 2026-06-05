@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+venv/
+ENV/
+
+# Databases
+*.db
+*.sqlite3
+
+# Temp media folders
+temp_media/
+smm_database.db
+
+# IDE configurations
+.idea/
+.vscode/
+.project
+.pydevproject

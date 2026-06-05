@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>НейроСофт Гейминг — SMM Панель</title>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js for premium analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0d0f14;
+            --panel-bg: rgba(22, 28, 41, 0.65);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --primary-glow: #eb5e28;
+            --secondary-glow: #64dfdf;
+            --text-main: #f4f5f6;
+            --text-muted: #8b9bb4;
+            --accent-green: #38b000;
+            --accent-red: #d90429;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(235, 94, 40, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(100, 223, 223, 0.05) 0%, transparent 40%);
+            background-attachment: fixed;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--text-main) 30%, var(--primary-glow));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .status-badge {
+            background: rgba(235, 94, 40, 0.1);
+            border: 1px solid var(--primary-glow);
+            color: var(--primary-glow);
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 0 15px rgba(235, 94, 40, 0.15);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--primary-glow);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.5; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.5; }
+        }
+
+        /* Metrics Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .metric-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(12px);
+            transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        .metric-card h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-card .value {
+            font-size: 2.4rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff, var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Controls Panel */
+        .controls-section {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 2.5rem;
+            backdrop-filter: blur(12px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .switch-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .switch-label {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        /* Toggle switch styling */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #333;
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--primary-glow);
+            box-shadow: 0 0 10px rgba(235, 94, 40, 0.3);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        /* Main Layout Grid */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(12px);
+        }
+
+        .card-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Queue List */
+        .queue-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1.2rem;
+        }
+
+        .queue-item {
+            border: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            padding: 1.2rem;
+            transition: background 0.2s ease;
+        }
+
+        .queue-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .queue-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.8rem;
+        }
+
+        .queue-title {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: var(--text-main);
+        }
+
+        .queue-score {
+            font-size: 0.85rem;
+            font-weight: 700;
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+            color: #fff;
+        }
+
+        .score-high { background: rgba(56, 176, 0, 0.2); border: 1px solid var(--accent-green); color: var(--accent-green); }
+        .score-med { background: rgba(235, 94, 40, 0.2); border: 1px solid var(--primary-glow); color: var(--primary-glow); }
+
+        .queue-meta {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        .queue-preview {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.8rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin-bottom: 1rem;
+            white-space: pre-wrap;
+        }
+
+        .queue-actions {
+            display: flex;
+            gap: 0.8rem;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            border: none;
+            color: #fff;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-approve { background-color: var(--accent-green); }
+        .btn-reject { background-color: var(--accent-red); }
+        .btn-force { 
+            background: linear-gradient(135deg, var(--primary-glow), #d85724); 
+            box-shadow: 0 4px 15px rgba(235, 94, 40, 0.3);
+        }
+
+        /* Analytics Section */
+        .analytics-card {
+            height: 100%;
+        }
+
+        /* Alert notifications */
+        .alert {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            background: #242a38;
+            border-left: 4px solid var(--primary-glow);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            display: none;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <div>
+            <h1>НейроСофт Гейминг</h1>
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-top: 0.3rem;">Панель автоматического SMM-редактора</p>
+        </div>
+        <div class="status-badge">
+            <span class="status-dot"></span>
+            <span>Система активна</span>
+        </div>
+    </header>
+
+    <!-- Metrics -->
+    <section class="metrics-grid">
+        <div class="metric-card">
+            <h3>Новые (спарсено)</h3>
+            <div class="value" id="count-parsed">{{ stats.parsed }}</div>
+        </div>
+        <div class="metric-card">
+            <h3>В очереди</h3>
+            <div class="value" id="count-pending" style="color: var(--primary-glow);">{{ stats.pending_review }}</div>
+        </div>
+        <div class="metric-card">
+            <h3>Опубликовано</h3>
+            <div class="value" id="count-published" style="color: var(--accent-green);">{{ stats.published }}</div>
+        </div>
+        <div class="metric-card">
+            <h3>Отклонено</h3>
+            <div class="value" id="count-rejected" style="color: var(--accent-red);">{{ stats.rejected }}</div>
+        </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls-section">
+        <div class="switch-container">
+            <span class="switch-label">Автоматическая публикация постов (85+):</span>
+            <label class="switch">
+                <input type="checkbox" id="pause-toggle" {% if not is_paused %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div>
+            <button class="btn btn-force" onclick="triggerPipeline()">🚀 Запустить парсер сейчас</button>
+        </div>
+    </section>
+
+    <!-- Main Section -->
+    <div class="main-layout">
+        <!-- Moderation Queue -->
+        <section class="card">
+            <h2 class="card-title">⏳ Очередь на модерацию <span style="font-size: 0.95rem; color: var(--text-muted); font-weight: normal;">(Посты с оценкой 70-84)</span></h2>
+            
+            <div class="queue-list" id="queue-container">
+                {% if not queue_items %}
+                    <p style="color: var(--text-muted); text-align: center; padding: 2rem;">Очередь пуста. Все новости обработаны! 🏖️</p>
+                {% else %}
+                    {% for item in queue_items %}
+                        <div class="queue-item" id="item-{{ item.id }}">
+                            <div class="queue-header">
+                                <span class="queue-title">{{ item.adapted_title }}</span>
+                                <span class="queue-score {% if item.score >= 80 %}score-high{% else %}score-med{% endif %}">{{ item.score }}/100</span>
+                            </div>
+                            <div class="queue-meta">
+                                <span>Источник: {{ item.source }}</span> • <span>Оценка ИИ: {{ item.score_reason }}</span>
+                            </div>
+                            <div class="queue-preview">{{ item.adapted_text }}</div>
+                            <div class="queue-actions">
+                                <button class="btn btn-approve" onclick="moderateItem({{ item.id }}, 'approve')">✅ Опубликовать</button>
+                                <button class="btn btn-reject" onclick="moderateItem({{ item.id }}, 'reject')">❌ Отклонить</button>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </section>
+
+        <!-- Charts / Analytics -->
+        <section class="card analytics-card">
+            <h2 class="card-title">📈 Статистика канала</h2>
+            <div style="position: relative; height: 300px; width: 100%;">
+                <canvas id="metricsChart"></canvas>
+            </div>
+        </section>
+    </div>
+</div>
+
+<div class="alert" id="toast">Действие выполнено успешно!</div>
+
+<script>
+    // Toast notifications
+    function showToast(text) {
+        const toast = document.getElementById('toast');
+        toast.innerText = text;
+        toast.style.display = 'block';
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, 3000);
+    }
+
+    // Toggle auto-publish
+    document.getElementById('pause-toggle').addEventListener('change', async function() {
+        const active = this.checked;
+        try {
+            const resp = await fetch('/api/toggle-pause', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ active: active })
+            });
+            if (resp.ok) {
+                showToast(active ? "Автопубликация активирована" : "Автопубликация приостановлена");
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    });
+
+    // Moderate Queue Items
+    async function moderateItem(id, action) {
+        try {
+            const resp = await fetch(`/api/moderate/${id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action })
+            });
+            if (resp.ok) {
+                const element = document.getElementById(`item-${id}`);
+                if (element) {
+                    element.remove();
+                }
+                
+                // Update stats counter values
+                const pendingCount = document.getElementById('count-pending');
+                const publishedCount = document.getElementById('count-published');
+                const rejectedCount = document.getElementById('count-rejected');
+                
+                pendingCount.innerText = Math.max(0, parseInt(pendingCount.innerText) - 1);
+                if (action === 'approve') {
+                    publishedCount.innerText = parseInt(publishedCount.innerText) + 1;
+                    showToast("Пост успешно опубликован!");
+                } else {
+                    rejectedCount.innerText = parseInt(rejectedCount.innerText) + 1;
+                    showToast("Пост отклонен.");
+                }
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    // Force Trigger Pipeline Run
+    async function triggerPipeline() {
+        showToast("Запуск парсинга новостей...");
+        try {
+            const resp = await fetch('/api/force-pipeline', { method: 'POST' });
+            if (resp.ok) {
+                showToast("Парсинг завершен! Обновите страницу.");
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    // Render stats chart using Chart.js
+    const ctx = document.getElementById('metricsChart').getContext('2d');
+    
+    // Injected variables from Jinja2 context
+    const labels = {{ chart_labels | tojson }};
+    const values = {{ chart_values | tojson }};
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Публикации',
+                data: values,
+                borderColor: '#eb5e28',
+                backgroundColor: 'rgba(235, 94, 40, 0.15)',
+                borderWidth: 3,
+                tension: 0.4,
+                fill: true,
+                pointBackgroundColor: '#64dfdf',
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#8b9bb4', stepSize: 1 },
+                    beginAtZero: true
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#8b9bb4' }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,39 @@
+name: SMM Automator Pipeline
+
+on:
+  schedule:
+    - cron: '0 * * * *'        # Run every hour
+  workflow_dispatch:            # Enable manual execution
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run SMM Pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          IMGFLIP_USERNAME: ${{ secrets.IMGFLIP_USERNAME }}
+          IMGFLIP_PASSWORD: ${{ secrets.IMGFLIP_PASSWORD }}
+          AUTO_PUBLISH_THRESHOLD: 85
+          QUEUE_THRESHOLD: 70
+        run: python -m smm_engine.main
