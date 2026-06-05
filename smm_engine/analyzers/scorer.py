@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 import google.generativeai as genai
 
-from smm_engine.config import GEMINI_API_KEY, GEMINI_MODEL
+from smm_engine.config import GEMINI_API_KEY, SCORER_MODEL
 from smm_engine.scrapers.base import NewsItem
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ if GEMINI_API_KEY:
 
 class NewsScorer:
     def __init__(self):
-        self.model_name = GEMINI_MODEL
+        self.model_name = SCORER_MODEL
         self.enabled = bool(GEMINI_API_KEY)
         if not self.enabled:
             logger.warning("GEMINI_API_KEY is missing. Scorer will output default scores.")

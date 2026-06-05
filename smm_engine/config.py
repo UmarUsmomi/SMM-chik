@@ -10,6 +10,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+SCORER_MODEL = os.getenv("SCORER_MODEL", "gemini-3.1-flash-lite")
+ADAPTER_MODEL = os.getenv("ADAPTER_MODEL", "gemini-3.5-flash")
+HUMANIZER_MODEL = os.getenv("HUMANIZER_MODEL", "gemini-3.5-flash")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")

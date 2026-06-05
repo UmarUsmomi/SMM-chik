@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, Optional
 import google.generativeai as genai
 
-from smm_engine.config import GEMINI_API_KEY, STYLE_GUIDE, GEMINI_MODEL
+from smm_engine.config import GEMINI_API_KEY, STYLE_GUIDE, ADAPTER_MODEL
 from smm_engine.scrapers.base import NewsItem
 from smm_engine.content.humanizer import TextHumanizer
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class ContentAdapter:
     def __init__(self):
-        self.model_name = GEMINI_MODEL
+        self.model_name = ADAPTER_MODEL
         self.enabled = bool(GEMINI_API_KEY)
         self.humanizer = TextHumanizer()
 
