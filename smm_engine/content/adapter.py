@@ -38,16 +38,31 @@ class ContentAdapter:
             hashtags = self._generate_hashtags(item.source, item.raw_data.get("tags", []))
             final_text = f"{humanized_body}\n\n{hashtags}"
             
+            # Validation: check for empty or literal 'None' string (common AI error under rate limit/blocks)
+            if not humanized_title or not humanized_body:
+                return None
+                
+            title_stripped = humanized_title.strip()
+            body_stripped = humanized_body.strip()
+            
+            if title_stripped.lower() == "none" or body_stripped.lower() == "none":
+                logger.warning(f"Content adapter returned literal 'None' string for '{item.title[:30]}...'. Treating as failed adaptation.")
+                return None
+            
             return {
-                "title": humanized_title,
+                "title": title_stripped,
                 "text": final_text
             }
         except Exception as e:
             logger.error(f"Error during humanization phase: {e}")
             # Fallback to unhumanized
+            raw_title = adapted_raw.get("title", "")
+            raw_body = adapted_raw.get("body", "")
+            if not raw_title or not raw_body or raw_title.strip().lower() == "none" or raw_body.strip().lower() == "none":
+                return None
             return {
-                "title": adapted_raw.get("title", ""),
-                "text": adapted_raw.get("body", "")
+                "title": raw_title.strip(),
+                "text": f"{raw_body.strip()}\n\n{self._generate_hashtags(item.source, item.raw_data.get('tags', []))}"
             }
 
     async def _adapt_pass(self, item: NewsItem) -> Optional[Dict[str, str]]:

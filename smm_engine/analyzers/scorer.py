@@ -30,7 +30,7 @@ class NewsScorer:
                 "uniqueness": 10,
                 "quality": 10,
                 "total": 55,
-                "reason": "Gemini API key not configured. Using default safety score."
+                "reason": "Ключ API Gemini не настроен. Используется оценка по умолчанию."
             }
 
         # Construct prompt
@@ -79,39 +79,39 @@ class NewsScorer:
                 "uniqueness": 0,
                 "quality": 0,
                 "total": 0,
-                "reason": f"AI scoring failed: {str(e)}"
+                "reason": f"Ошибка оценки ИИ: {str(e)}"
             }
 
     def _build_prompt(self, item: NewsItem) -> str:
         return f"""
-You are an expert editor for the Telegram channel "НейроСофт Гейминг".
-The channel covers:
-1. Artificial Intelligence (Neural Networks, LLMs, AI tools, AI models)
-2. Software & Tech Tools (new utilities, coding tools, programming, software updates)
-3. Gaming & Game Dev (game updates, game engine tech, gaming news, gaming GPUs, Steam updates)
+Ты — профессиональный редактор Telegram-канала "НейроСофт Гейминг".
+Наш канал посвящен следующим темам:
+1. Искусственный интеллект (нейросети, языковые модели LLM, инструменты и модели ИИ)
+2. Разработка и IT-инструменты (новые утилиты, инструменты для разработки, программирование, обновления ПО)
+3. Гейминг и геймдев (обновления игр, технологии игровых движков, игровые новости, видеокарты, обновления в Steam)
 
-Your task is to analyze the following news item and score it out of 100 points.
+Твоя задача — проанализировать следующую новость и оценить её привлекательность по 100-балльной шкале.
 
-News Title: {item.title}
-News URL: {item.url}
-Source: {item.source}
-Raw Meta/Summary: {json.dumps(item.raw_data, ensure_ascii=False)}
+Заголовок новости: {item.title}
+URL новости: {item.url}
+Источник: {item.source}
+Сырые данные/Краткое описание: {json.dumps(item.raw_data, ensure_ascii=False)}
 
-Score criteria:
-1. Relevance (max 30 pts): How well does it fit AI, Software, or Gaming? (0 = totally unrelated, 30 = perfect fit)
-2. Freshness/Hotness (max 20 pts): Is it an urgent, hot, or highly active news?
-3. Virality (max 20 pts): How engaging or hype-worthy is this for tech geeks and gamers? Does it make people want to comment?
-4. Uniqueness (max 15 pts): Is this a unique event/repo/feature, or just another generic blog post?
-5. Quality/Depth (max 15 pts): Does the source/text have concrete facts, github links, or real-world impact?
+Критерии оценки:
+1. Соответствие тематике (макс. 30 баллов): Насколько хорошо новость подходит под тематику ИИ, IT-разработки или гейминга? (0 = вообще не подходит, 30 = идеальное попадание)
+2. Свежесть/Актуальность (макс. 20 баллов): Насколько это горячая, важная или обсуждаемая новость прямо сейчас?
+3. Вирусность (макс. 20 баллов): Насколько новость интересна и увлекательна для гиков и геймеров? Вызовет ли она желание обсудить её в комментариях?
+4. Уникальность (макс. 15 баллов): Это уникальное событие/репозиторий/фича или очередная банальная статья?
+5. Качество/Глубина (макс. 15 баллов): Содержит ли новость конкретные факты, ссылки на GitHub или реальное влияние на индустрию?
 
-You must respond ONLY with a JSON object in this format:
+Ты должен ответить СТРОГО в формате JSON со следующей структурой:
 {{
-  "relevance": number,
-  "freshness": number,
-  "virality": number,
-  "uniqueness": number,
-  "quality": number,
-  "total": number,
-  "reason": "A brief explanation of the score strictly in Russian language (1-2 sentences explaining why this news is relevant and interesting for our geek/gamer audience)"
+  "relevance": число,
+  "freshness": число,
+  "virality": число,
+  "uniqueness": число,
+  "quality": число,
+  "total": число,
+  "reason": "Краткое объяснение оценки строго на русском языке (1-2 предложения, объясняющие, почему эта новость актуальна и интересна для нашей аудитории гиков/геймеров)"
 }}
 """

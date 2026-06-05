@@ -161,15 +161,17 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     return {"status": "ok"}
                     
                 for item in pending:
+                    preview_title = publisher._escape_html(item['adapted_title']) if item['adapted_title'] else "<i>Без заголовка</i>"
+                    preview_text = publisher._format_markdown_to_html(item['adapted_text']) if item['adapted_text'] else "<i>Текст не адаптирован</i>"
                     msg = (
                         f"<b>🔥 Новость в очереди (ID: {item['id']})</b>\n"
                         f"<b>Источник:</b> {item['source']}\n"
-                        f"<b>Оригинальный заголовок:</b> {item['title']}\n"
+                        f"<b>Оригинальный заголовок:</b> {publisher._escape_html(item['title'])}\n"
                         f"<b>Скоринг:</b> {item['score']}/100\n"
-                        f"<b>Почему:</b> {item['score_reason']}\n\n"
+                        f"<b>Почему:</b> {publisher._escape_html(item['score_reason'])}\n\n"
                         f"--- <b>ПРЕВЬЮ ПОСТА</b> ---\n"
-                        f"<b>{item['adapted_title']}</b>\n\n"
-                        f"{item['adapted_text']}"
+                        f"<b>{preview_title}</b>\n\n"
+                        f"{preview_text}"
                     )
                     
                     keyboard = {
@@ -362,9 +364,15 @@ async def api_moderate_item(item_id: int, req: ModerateReq):
         title = item["adapted_title"]
         text = item["adapted_text"]
         
-        # If it failed to adapt earlier (None due to API rate limit), let's adapt it on the fly now!
-        if not title or not text:
-            logger.info(f"Item {item_id} has no adapted content. Adapting on the fly...")
+        # If it failed to adapt earlier (None or literal 'None' string), let's adapt it on the fly now!
+        is_adapted_valid = (
+            title and text and 
+            title.strip().lower() != "none" and 
+            text.strip().lower() != "none"
+        )
+        
+        if not is_adapted_valid:
+            logger.info(f"Item {item_id} has invalid or missing adapted content. Adapting on the fly...")
             from smm_engine.content.adapter import ContentAdapter
             from smm_engine.scrapers.base import NewsItem
             adapter = ContentAdapter()
@@ -380,6 +388,10 @@ async def api_moderate_item(item_id: int, req: ModerateReq):
                 if adapted and adapted.get("title") and adapted.get("text"):
                     title = adapted["title"]
                     text = adapted["text"]
+                    
+                    if title.strip().lower() == "none" or text.strip().lower() == "none":
+                        raise Exception("Adapter returned literal 'None' string")
+                        
                     # Save it so we don't have to re-adapt next time
                     db.save_adapted_content(item_id, title, text, status=item["status"])
                 else:

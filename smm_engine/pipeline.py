@@ -52,6 +52,8 @@ class SMMPipeline:
             recent_items = []
 
         new_items_processed = []
+        scored_count = 0
+        max_scores_per_run = 10  # Hard limit to prevent rate limits and save API quota
 
         # 3. Filter and score items
         for item in scraped_items:
@@ -67,28 +69,31 @@ class SMMPipeline:
                     summary["duplicates"] += 1
                     # Save to DB as duplicate/rejected directly to prevent re-processing
                     self.db.save_news_item(item.source, item.source_id, item.title, item.url, item.raw_data)
-                    # Get the ID of the newly saved item
-                    # Since it's saved, we can query or ignore. We'll just mark it rejected.
-                    # Actually, we can just skip it
                     continue
 
-                # C. Save news item to DB
+                # C. Hard limit on new items scored per run
+                if scored_count >= max_scores_per_run:
+                    logger.info(f"Reached max_scores_per_run ({max_scores_per_run}). Skipping remaining new items for this run.")
+                    break  # Stop processing further new items to protect API quota
+
+                # D. Save news item to DB
                 item_id = self.db.save_news_item(item.source, item.source_id, item.title, item.url, item.raw_data)
                 if not item_id:
                     continue
 
-                # D. Score the news item using Gemini
+                # E. Score the news item using Gemini
                 score_res = await self.scorer.score_item(item)
                 score = score_res.get("total", 0)
                 reason = score_res.get("reason", "No reason provided")
                 
-                # E. Update scoring in database
+                # F. Update scoring in database
                 self.db.update_scoring(item_id, score, reason, status='parsed')
                 
                 # Retrieve full saved object to keep track
                 db_item = self.db.get_by_id(item_id)
                 new_items_processed.append(db_item)
                 summary["processed"] += 1
+                scored_count += 1
                 
                 # Update recent items for subsequent comparisons in the same loop
                 recent_items.append({"title": item.title, "url": item.url})
@@ -111,6 +116,9 @@ class SMMPipeline:
             if not all_candidates:
                 logger.info("No candidates for publication or review in this run.")
                 return summary
+
+            adapted_count = 0
+            max_adaptations_per_run = 3
 
             # Process candidates according to threshold
             for candidate in all_candidates:
@@ -152,11 +160,18 @@ class SMMPipeline:
                     # B. Add to review queue
                     logger.info(f"Queuing candidate '{candidate.get('title')}' with score {score}")
                     
+                    # If we've already adapted enough items in this run, keep this one in 'parsed' status
+                    # so it will be adapted/processed in the next run.
+                    if adapted_count >= max_adaptations_per_run:
+                        logger.info(f"Skipping adaptation for '{candidate.get('title')}' in this run (max_adaptations_per_run reached).")
+                        continue
+                    
                     # Adapt text beforehand so it is ready for approval in Telegram Bot
                     adapted = await self.adapter.adapt_news(news_item)
                     if adapted:
                         self.db.save_adapted_content(item_id, adapted["title"], adapted["text"], status='pending_review')
                         summary["queued"] += 1
+                        adapted_count += 1
                     else:
                         self.db.update_scoring(item_id, score, candidate.get("score_reason"), status='pending_review')
                         summary["queued"] += 1

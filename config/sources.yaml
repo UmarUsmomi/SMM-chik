@@ -11,7 +11,7 @@ sources:
       - "machine learning"
       - "GPU"
     min_score: 50             # Only stories with points >= 50
-    limit: 20                 # Number of hits per query
+    limit: 3                  # Number of hits per query (reduced from 20)
 
   devto:
     enabled: true
@@ -20,7 +20,7 @@ sources:
       - "gamedev"
       - "webdev"
       - "python"
-    limit: 10                 # Number of articles per tag
+    limit: 3                  # Number of articles per tag (reduced from 10)
     min_reactions: 10         # Minimum reactions to consider
 
   steam:
@@ -29,9 +29,9 @@ sources:
       730: "Counter-Strike 2"
       570: "Dota 2"
       1172470: "Apex Legends"
-      2208920: "Assassins Creed Mirage" # just examples
+      2208920: "Assassins Creed Mirage"
       1091500: "Cyberpunk 2077"
-    limit: 3                  # News items per game
+    limit: 1                  # News items per game (reduced from 3)
 
   github:
     enabled: true
@@ -41,9 +41,9 @@ sources:
       - "neural-network"
       - "gamedev"
     min_stars: 100
-    limit: 5                  # Repos per search query
+    limit: 2                  # Repos per search query (reduced from 5)
 
   gamersnexus:
     enabled: true
     rss_url: "https://gamersnexus.net/rss.xml"
-    limit: 5
+    limit: 2                  # Reduced from 5

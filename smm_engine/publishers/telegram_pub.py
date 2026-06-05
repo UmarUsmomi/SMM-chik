@@ -23,14 +23,38 @@ class TelegramPublisher:
         return html.escape(text)
 
     def _format_markdown_to_html(self, text: str) -> str:
-        """Converts double-asterisk markdown bold (**) to HTML bold tags (<b>) for Telegram"""
+        """Converts double-asterisk markdown bold (**) to HTML bold tags (<b>) for Telegram
+        and preserves valid allowed HTML tags while escaping any other HTML characters."""
         if not text:
             return ""
         import re
-        # First, escape HTML characters to protect Telegram HTML parser from breaking on raw <, >, or &
+        
+        # 1. Escape HTML characters to protect Telegram HTML parser from breaking
         escaped = html.escape(text)
-        # Convert escaped double-asterisks (which remain '**') to <b>...</b>
-        return re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+        
+        # 2. Convert escaped double-asterisks to <b>...</b>
+        escaped = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+        
+        # 3. Restore allowed HTML tags from their escaped forms
+        replacements = {
+            r'&lt;b&gt;': '<b>',
+            r'&lt;/b&gt;': '</b>',
+            r'&lt;i&gt;': '<i>',
+            r'&lt;/i&gt;': '</i>',
+            r'&lt;code&gt;': '<code>',
+            r'&lt;/code&gt;': '</code>',
+            r'&lt;pre&gt;': '<pre>',
+            r'&lt;/pre&gt;': '</pre>',
+            r'&lt;blockquote&gt;': '<blockquote>',
+            r'&lt;blockquote expandable&gt;': '<blockquote expandable>',
+            r'&lt;/blockquote&gt;': '</blockquote>'
+        }
+        
+        for escaped_tag, unescaped_tag in replacements.items():
+            escaped = escaped.replace(escaped_tag, unescaped_tag)
+            escaped = escaped.replace(escaped_tag.upper(), unescaped_tag)
+            
+        return escaped
 
     async def publish_text(self, title: str, text: str) -> bool:
         """Publishes a text post to the Telegram channel"""
