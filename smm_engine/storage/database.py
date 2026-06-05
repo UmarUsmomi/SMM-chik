@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import contextvars
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import logging
@@ -9,17 +10,70 @@ from smm_engine.config import SQLITE_DB_PATH, DATABASE_URL
 
 logger = logging.getLogger(__name__)
 
+# Context-local connection storage to reuse connection within the same task/request
+# and avoid concurrent database access conflicts or connection exhaustion.
+_conn_var = contextvars.ContextVar("db_connection", default=None)
+
+class ConnectionProxy:
+    """Wrapper that prevents closing the connection prematurely in helper methods"""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        # Prevent closing to keep connection cached/alive in context
+        pass
+
+    def real_close(self):
+        # Actually close the connection
+        self._conn.close()
+
 class DatabaseManager:
     def __init__(self):
         self.use_postgres = bool(DATABASE_URL)
-        self.conn = None
+        _conn_var.set(None)
         self._init_db()
 
+    def close_current(self):
+        """Manually closes the context-cached connection if any"""
+        conn = _conn_var.get()
+        if conn:
+            try:
+                conn.real_close()
+            except Exception:
+                pass
+            _conn_var.set(None)
+
     def _get_connection(self):
+        conn = _conn_var.get()
+        
+        # 1. Check if cached connection exists and is alive
+        if conn:
+            try:
+                if self.use_postgres:
+                    with conn._conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                else:
+                    conn._conn.execute("SELECT 1")
+                return conn
+            except Exception:
+                # Connection is dead, release it
+                try:
+                    conn.real_close()
+                except Exception:
+                    pass
+                _conn_var.set(None)
+
+        # 2. Establish a new connection and cache it as a proxy
         if self.use_postgres:
             import psycopg2
             try:
-                return psycopg2.connect(DATABASE_URL)
+                new_conn = psycopg2.connect(DATABASE_URL)
+                proxy = ConnectionProxy(new_conn)
+                _conn_var.set(proxy)
+                return proxy
             except Exception as e:
                 logger.error("\n" + "="*80 + "\n" +
                              f"❌ DATABASE CONNECTION ERROR:\n"
@@ -33,7 +87,10 @@ class DatabaseManager:
                     f"Ensure DATABASE_URL is correct and uses port 6543. Original error: {e}"
                 ) from e
         else:
-            return sqlite3.connect(SQLITE_DB_PATH)
+            new_conn = sqlite3.connect(SQLITE_DB_PATH)
+            proxy = ConnectionProxy(new_conn)
+            _conn_var.set(proxy)
+            return proxy
 
     def _init_db(self):
         """Initializes tables if they do not exist"""
