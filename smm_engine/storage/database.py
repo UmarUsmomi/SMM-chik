@@ -412,8 +412,18 @@ class DatabaseManager:
         cursor.execute(query)
         results = []
         for row in cursor.fetchall():
+            pub_date = row[0]
+            # Convert date/datetime object to string for JSON serialization
+            if pub_date is not None:
+                if hasattr(pub_date, "isoformat"):
+                    pub_date = pub_date.isoformat()
+                else:
+                    pub_date = str(pub_date)
+            else:
+                pub_date = ""
+                
             results.append({
-                "date": row[0],
+                "date": pub_date,
                 "count": row[1]
             })
             
