@@ -20,6 +20,25 @@ db = DatabaseManager()
 publisher = TelegramPublisher()
 templates = Jinja2Templates(directory="web/templates")
 
+# State variables to prevent concurrent pipeline runs
+pipeline_running = False
+pipeline_lock = asyncio.Lock()
+
+@app.on_event("startup")
+async def startup_event():
+    """Auto-registers Telegram Webhook on startup using Render URL"""
+    import os
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if render_url and TELEGRAM_BOT_TOKEN:
+        webhook_url = f"{render_url}/webhook"
+        set_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(set_url, json={"url": webhook_url}, timeout=10)
+                logger.info(f"Auto-setting Telegram Webhook to {webhook_url}: {resp.json()}")
+        except Exception as e:
+            logger.error(f"Failed to auto-set Telegram Webhook on startup: {e}")
+
 async def send_bot_message(chat_id: int, text: str, reply_markup: dict = None):
     """Helper to send a message to a user in the bot"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -66,10 +85,23 @@ async def edit_message_text(chat_id: int, message_id: int, text: str):
         logger.error(f"Error editing message: {e}")
 
 async def run_pipeline_task():
-    """Manually triggers the SMM pipeline in background"""
-    logger.info("Manual pipeline run triggered via bot...")
-    pipeline = SMMPipeline()
-    await pipeline.run()
+    """Manually triggers the SMM pipeline in background with concurrency guard"""
+    global pipeline_running
+    async with pipeline_lock:
+        if pipeline_running:
+            logger.info("Pipeline is already running, skipping duplicate run.")
+            return
+        pipeline_running = True
+        
+    try:
+        logger.info("Manual pipeline run triggered via bot...")
+        pipeline = SMMPipeline()
+        await pipeline.run()
+    except Exception as e:
+        logger.error(f"Error in manual pipeline execution: {e}")
+    finally:
+        async with pipeline_lock:
+            pipeline_running = False
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -213,33 +245,79 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_view(request: Request):
     """Renders the HTML Dashboard"""
-    # Fetch stats
-    stats = db.get_stats()
+    try:
+        # Fetch stats
+        stats = db.get_stats()
 
-    is_paused = db.get_setting("is_paused", "false") == "true"
-    queue_items = db.get_queue(status='pending_review', limit=15)
-    rejected_items = db.get_queue(status='rejected', limit=10)
-    
-    chart_data = db.get_publication_stats()
-    if not chart_data:
-        from datetime import datetime, timedelta
-        chart_data = [{"date": (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d"), "count": 0} for i in range(6, -1, -1)]
+        is_paused = db.get_setting("is_paused", "false") == "true"
+        queue_items = db.get_queue(status='pending_review', limit=15)
+        rejected_items = db.get_queue(status='rejected', limit=10)
         
-    chart_labels = [x["date"] for x in chart_data]
-    chart_values = [x["count"] for x in chart_data]
-    
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={
-            "stats": stats,
-            "is_paused": is_paused,
-            "queue_items": queue_items,
-            "rejected_items": rejected_items,
-            "chart_labels": chart_labels,
-            "chart_values": chart_values
-        }
-    )
+        chart_data = db.get_publication_stats()
+        if not chart_data:
+            from datetime import datetime, timedelta
+            chart_data = [{"date": (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d"), "count": 0} for i in range(6, -1, -1)]
+            
+        chart_labels = [x["date"] for x in chart_data]
+        chart_values = [x["count"] for x in chart_data]
+        
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={
+                "stats": stats,
+                "is_paused": is_paused,
+                "queue_items": queue_items,
+                "rejected_items": rejected_items,
+                "chart_labels": chart_labels,
+                "chart_values": chart_values
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error loading dashboard data: {e}")
+        return HTMLResponse(
+            content="""
+            <html>
+                <head>
+                    <title>База данных перегружена</title>
+                    <meta charset="utf-8">
+                    <style>
+                        body {
+                            background-color: #0d0f14;
+                            color: #f4f5f6;
+                            font-family: sans-serif;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            justify-content: center;
+                            height: 100vh;
+                            margin: 0;
+                        }
+                        h1 { color: #eb5e28; margin-bottom: 10px; }
+                        p { color: #8b9bb4; max-width: 500px; text-align: center; line-height: 1.6; margin-bottom: 20px; }
+                        button {
+                            background: linear-gradient(135deg, #eb5e28, #d85724);
+                            border: none;
+                            color: white;
+                            padding: 12px 24px;
+                            border-radius: 8px;
+                            cursor: pointer;
+                            font-weight: bold;
+                            box-shadow: 0 4px 15px rgba(235, 94, 40, 0.3);
+                            transition: transform 0.2s;
+                        }
+                        button:hover { transform: translateY(-1px); }
+                    </style>
+                </head>
+                <body>
+                    <h1>База данных временно недоступна</h1>
+                    <p>Похоже, к базе данных выполняется слишком много одновременных подключений из-за частых запросов парсинга. Пожалуйста, подождите 15-30 секунд и обновите страницу.</p>
+                    <button onclick="window.location.reload()">Обновить страницу 🔄</button>
+                </body>
+            </html>
+            """,
+            status_code=503
+        )
 
 class TogglePauseReq(BaseModel):
     active: bool
@@ -282,6 +360,9 @@ async def api_moderate_item(item_id: int, req: ModerateReq):
 @app.post("/api/force-pipeline")
 async def api_force_pipeline(background_tasks: BackgroundTasks):
     """API endpoint to trigger pipeline execution"""
+    global pipeline_running
+    if pipeline_running:
+        raise HTTPException(status_code=409, detail="Парсинг уже запущен. Пожалуйста, подождите завершения текущего процесса.")
     background_tasks.add_task(run_pipeline_task)
     return {"status": "ok", "message": "Pipeline started"}
 

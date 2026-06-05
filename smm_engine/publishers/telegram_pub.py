@@ -22,6 +22,16 @@ class TelegramPublisher:
         # Simply escape HTML tags
         return html.escape(text)
 
+    def _format_markdown_to_html(self, text: str) -> str:
+        """Converts double-asterisk markdown bold (**) to HTML bold tags (<b>) for Telegram"""
+        if not text:
+            return ""
+        import re
+        # First, escape HTML characters to protect Telegram HTML parser from breaking on raw <, >, or &
+        escaped = html.escape(text)
+        # Convert escaped double-asterisks (which remain '**') to <b>...</b>
+        return re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+
     async def publish_text(self, title: str, text: str) -> bool:
         """Publishes a text post to the Telegram channel"""
         if not self.enabled:
@@ -29,14 +39,16 @@ class TelegramPublisher:
             return True
 
         # Format with HTML tags
-        formatted_message = f"<b>{self._escape_html(title)}</b>\n\n{text}"
+        formatted_message = f"<b>{self._escape_html(title)}</b>\n\n{self._format_markdown_to_html(text)}"
         
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         payload = {
             "chat_id": self.channel_id,
             "text": formatted_message,
             "parse_mode": "HTML",
-            "disable_web_page_preview": False
+            "link_preview_options": {
+                "show_above_text": True
+            }
         }
         
         try:
@@ -58,7 +70,7 @@ class TelegramPublisher:
             logger.info(f"[DRY-RUN] Publishing photo post:\nTitle: {title}\nPhoto: {photo_url_or_path}\nText:\n{text}")
             return True
 
-        caption = f"<b>{self._escape_html(title)}</b>\n\n{text}"
+        caption = f"<b>{self._escape_html(title)}</b>\n\n{self._format_markdown_to_html(text)}"
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
         
         try:
