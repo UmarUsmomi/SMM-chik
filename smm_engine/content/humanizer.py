@@ -72,9 +72,10 @@ Input text to clean:
 Instructions:
 1. Identify and remove any AI-isms, cliches, or unnatural language.
 2. Rewrite sentences to be simple, human, and direct. Keep the hype/energetic/cool tone but make it sound like a real human wrote it.
-3. Keep it in Russian. Maintain any formatting like markdown links, bolding (if moderate), or lists, but clean up the style.
-4. If the text is already good and has no AI-isms, return it as is. Do NOT add new details.
-5. Return ONLY the final cleaned text, without any explanations or meta-comments.
+3. Keep it in Russian.
+4. IMPORTANT: Maintain and preserve all HTML formatting tags such as <b>...</b>, <i>...</i>, and <blockquote expandable>...</blockquote> exactly as they are. Do NOT strip or corrupt these tags.
+5. If the text is already good and has no AI-isms, return it as is. Do NOT add new details.
+6. Return ONLY the final cleaned text, without any explanations or meta-comments.
 """
 
         try:

@@ -36,7 +36,7 @@ class ContentAdapter:
             
             # Combine body and tags if needed, or format as final post text
             hashtags = self._generate_hashtags(item.source, item.raw_data.get("tags", []))
-            final_text = f"{humanized_body}\n\n{hashtags}\n\nИсточник: {item.url}"
+            final_text = f"{humanized_body}\n\n{hashtags}"
             
             return {
                 "title": humanized_title,
@@ -47,7 +47,7 @@ class ContentAdapter:
             # Fallback to unhumanized
             return {
                 "title": adapted_raw.get("title", ""),
-                "text": f"{adapted_raw.get('body', '')}\n\nИсточник: {item.url}"
+                "text": adapted_raw.get("body", "")
             }
 
     async def _adapt_pass(self, item: NewsItem) -> Optional[Dict[str, str]]:
@@ -64,6 +64,9 @@ Target Tone: {tone}
 
 Style Rules:
 {style_rules_str}
+- Use rich, highly-specific tech/geek emojis (e.g. ⚡, 🚀, 💻, 👾, 🎮, 🛡️, 🛠️, 🎯, ⚙️, 🔔, 🌟, 💥, 🧩).
+- Highlight key phrases and bullet point headers using HTML bold tags: <b>Важные слова</b>.
+- Format list blocks or technical details using expandable quote blocks in Telegram HTML format: <blockquote expandable>Содержимое списка или цитаты</blockquote>. Every list section should be wrapped in this tag so that it becomes collapsible/expandable in Telegram!
 
 Format the following news item into an engaging, hype-filled Telegram post:
 News Title: {item.title}
@@ -73,12 +76,11 @@ Raw Data: {json.dumps(item.raw_data, ensure_ascii=False)}
 
 Instructions:
 1. Write in Russian.
-2. Formulate a catchy, energetic title (title should NOT contain markdown bold since it will be styled separately).
-3. Write the body of the post. Use short, punchy paragraphs, relevant emojis, and list points (using 🔥 as bullet points if appropriate).
+2. Formulate a catchy, energetic title (title should NOT contain HTML bold tags since it will be styled separately).
+3. Write the body of the post. Use short, punchy paragraphs, relevant emojis, and list points.
 4. Explain technical things simply and add some nerd humor or memey context.
-5. End with an open question to encourage comments/discussion.
-6. Do NOT add hashtags or the source URL to the body — those will be appended automatically later.
-7. Return ONLY a JSON object in this format:
+5. Do NOT add hashtags or the source URL to the body — those will be appended automatically later.
+6. Return ONLY a JSON object in this format:
 {{
   "title": "Catchy Russian Title",
   "body": "Post body text in Russian..."
