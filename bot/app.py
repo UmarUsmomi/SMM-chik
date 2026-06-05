@@ -300,5 +300,6 @@ async def api_force_pipeline(background_tasks: BackgroundTasks):
     return {"status": "ok", "message": "Pipeline started"}
 
 @app.get("/health")
+@app.get("/healthz")
 def health_check():
     return {"status": "healthy", "service": "smm-queue-bot"}
