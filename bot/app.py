@@ -11,8 +11,32 @@ from smm_engine.storage.database import DatabaseManager
 from smm_engine.publishers.telegram_pub import TelegramPublisher
 from smm_engine.pipeline import SMMPipeline
 
+import collections
+
+class MemoryLogHandler(logging.Handler):
+    def __init__(self, capacity=100):
+        super().__init__()
+        self.capacity = capacity
+        self.logs = collections.deque(maxlen=capacity)
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.logs.append(msg)
+        except Exception:
+            self.handleError(record)
+
+    def get_logs(self):
+        return list(self.logs)
+
+# Create and configure memory log handler
+memory_log_handler = MemoryLogHandler()
+memory_log_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+logging.getLogger().addHandler(memory_log_handler)
+
 logger = logging.getLogger("telegram_bot")
 
 app = FastAPI(title="SMM Automator Queue Bot")
@@ -464,6 +488,11 @@ async def test_telegram():
         return {"error": str(e)}
 
 
+
+@app.get("/api/logs")
+def get_api_logs():
+    """Returns the last 100 log lines stored in memory"""
+    return {"logs": memory_log_handler.get_logs()}
 
 @app.get("/health")
 @app.get("/healthz")

@@ -455,6 +455,12 @@
             </div>
         </div>
     </section>
+
+    <!-- Logs Terminal -->
+    <section class="card" style="margin-top: 2rem;">
+        <h2 class="card-title">🖥️ Терминал логов (Реальное время)</h2>
+        <div id="terminal-logs" style="background: #090b0f; color: #64dfdf; font-family: monospace; padding: 1.2rem; border-radius: 12px; height: 280px; overflow-y: auto; font-size: 0.85rem; border: 1px solid var(--border-color); line-height: 1.5; white-space: pre-wrap; word-break: break-all;">Загрузка логов...</div>
+    </section>
 </div>
 
 <div class="alert" id="toast">Действие выполнено успешно!</div>
@@ -614,6 +620,40 @@
             }
         }
     });
+
+    // Realtime log fetching
+    async function fetchLogs() {
+        try {
+            const resp = await fetch('/api/logs');
+            if (resp.ok) {
+                const data = await resp.json();
+                const container = document.getElementById('terminal-logs');
+                if (data.logs && data.logs.length > 0) {
+                    const isScrolledToBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 30;
+                    
+                    container.innerHTML = data.logs.map(log => {
+                        let color = '#f4f5f6';
+                        if (log.includes(' - ERROR - ')) color = 'var(--accent-red)';
+                        else if (log.includes(' - WARNING - ')) color = '#ffb703';
+                        else if (log.includes(' - INFO - ')) color = '#64dfdf';
+                        return `<div style="color: ${color}; margin-bottom: 2px;">${log}</div>`;
+                    }).join('');
+                    
+                    if (isScrolledToBottom) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                } else {
+                    container.innerText = "Логов пока нет. Запустите парсинг для генерации логов.";
+                }
+            }
+        } catch (err) {
+            console.error("Error fetching logs:", err);
+        }
+    }
+
+    // Initial load and interval
+    fetchLogs();
+    setInterval(fetchLogs, 4000);
 </script>
 
 </body>

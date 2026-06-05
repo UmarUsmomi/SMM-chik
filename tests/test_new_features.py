@@ -121,7 +121,15 @@ class DummyPluginScraper(BaseScraper):
          
          # Run all scrapers and verify it ran the dynamic plugin scraper
          results = await run_all_scrapers(config)
-         
          assert len(results) == 1
          assert results[0].source == "dummy_plugin"
          assert results[0].title == "Plugin News Title"
+
+# 4. Test API logs endpoint
+def test_api_logs():
+    from fastapi.testclient import TestClient
+    from bot.app import app
+    client = TestClient(app)
+    resp = client.get("/api/logs")
+    assert resp.status_code == 200
+    assert "logs" in resp.json()
