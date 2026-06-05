@@ -1,0 +1,36 @@
+# SMM Automator Branding Theme Configuration
+
+name: "Default Dark & Red Tech/Gaming Theme"
+
+colors:
+  background_fallback: [13, 15, 20, 255] # RGBA
+  overlay_dim: [13, 15, 20, 150] # RGBA
+  text_primary: [255, 255, 255, 255] # RGBA
+  
+  # Branding elements
+  brand_dark: [13, 15, 20, 255]
+  brand_accent: [217, 4, 41, 255]
+  
+  # Decorative elements
+  splatter_dark: [255, 255, 255, 180]
+  splatter_accent: [217, 4, 41, 180]
+  watermark_text: [255, 255, 255, 255]
+  watermark_accent: [217, 4, 41, 255]
+
+layout:
+  font_size_square: 56
+  font_size_vertical: 42
+  wrap_width_square: 900
+  wrap_width_vertical: 600
+  padding_left_square: 90
+  padding_left_vertical: 60
+
+watermark:
+  font_size: 24
+  text_parts:
+    - text: "/ игры "
+      color_type: "primary" # text_primary or watermark_text
+    - text: "⚡"
+      color_type: "accent" # brand_accent or watermark_accent
+    - text: " патчи /"
+      color_type: "primary"

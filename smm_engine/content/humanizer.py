@@ -79,12 +79,13 @@ Instructions:
 """
 
         try:
-            model = genai.GenerativeModel(self.model_name)
-            response = model.generate_content(
+            from smm_engine.utils.gemini_helper import generate_content_with_retry
+            response_text = await generate_content_with_retry(
                 prompt,
+                initial_model=self.model_name,
                 generation_config={"temperature": 0.1}
             )
-            cleaned_text = response.text.strip()
+            cleaned_text = response_text.strip()
             if cleaned_text:
                 return cleaned_text
             return text

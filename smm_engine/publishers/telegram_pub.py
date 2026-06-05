@@ -24,37 +24,58 @@ class TelegramPublisher:
 
     def _format_markdown_to_html(self, text: str) -> str:
         """Converts double-asterisk markdown bold (**) to HTML bold tags (<b>) for Telegram
-        and preserves valid allowed HTML tags while escaping any other HTML characters."""
+        and preserves valid allowed HTML tags while escaping any other HTML characters.
+        Uses a robust token-splitting and whitelisting approach."""
         if not text:
             return ""
         import re
+        import html
         
-        # 1. Escape HTML characters to protect Telegram HTML parser from breaking
-        escaped = html.escape(text)
+        # 1. Normalize by unescaping any pre-escaped HTML characters to get raw text
+        raw_text = html.unescape(text)
         
-        # 2. Convert escaped double-asterisks to <b>...</b>
-        escaped = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+        # 2. Convert raw double-asterisks to HTML bold tags
+        raw_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', raw_text)
         
-        # 3. Restore allowed HTML tags from their escaped forms
-        replacements = {
-            r'&lt;b&gt;': '<b>',
-            r'&lt;/b&gt;': '</b>',
-            r'&lt;i&gt;': '<i>',
-            r'&lt;/i&gt;': '</i>',
-            r'&lt;code&gt;': '<code>',
-            r'&lt;/code&gt;': '</code>',
-            r'&lt;pre&gt;': '<pre>',
-            r'&lt;/pre&gt;': '</pre>',
-            r'&lt;blockquote&gt;': '<blockquote>',
-            r'&lt;blockquote expandable&gt;': '<blockquote expandable>',
-            r'&lt;/blockquote&gt;': '</blockquote>'
+        # 3. Split the text into HTML tags and non-tag text segments
+        parts = re.split(r'(<[^>]+>)', raw_text)
+        
+        allowed_tags = {
+            '<b>', '</b>', '<strong>', '</strong>',
+            '<i>', '</i>', '<em>', '</em>',
+            '<code>', '</code>',
+            '<pre>', '</pre>',
+            '<blockquote>', '</blockquote>',
+            '<blockquote expandable>',
+            '<u>', '</u>', '<ins>', '</ins>',
+            '<s>', '</s>', '<strike>', '</strike>', '<del>', '</del>',
+            '<tg-spoiler>', '</tg-spoiler>'
         }
         
-        for escaped_tag, unescaped_tag in replacements.items():
-            escaped = escaped.replace(escaped_tag, unescaped_tag)
-            escaped = escaped.replace(escaped_tag.upper(), unescaped_tag)
-            
-        return escaped
+        result = []
+        for i, part in enumerate(parts):
+            if i % 2 == 1:
+                # It's an HTML tag. Normalize it for comparison (strip and lower)
+                tag_clean = part.strip().lower()
+                
+                # Check if it's whitelisted
+                is_allowed = False
+                if tag_clean in allowed_tags:
+                    is_allowed = True
+                elif tag_clean.startswith('<a ') or tag_clean.startswith('<code ') or tag_clean.startswith('<pre ') or tag_clean.startswith('<blockquote '):
+                    # Keep complex allowed tags with attributes (e.g. href, language class, or expandable)
+                    is_allowed = True
+                    
+                if is_allowed:
+                    result.append(part)
+                else:
+                    # Escape unapproved HTML-like structures to render them safely as text
+                    result.append(html.escape(part))
+            else:
+                # It's text between tags. Escape any HTML characters to protect Telegram HTML parser
+                result.append(html.escape(part))
+                
+        return "".join(result)
 
     async def publish_text(self, title: str, text: str) -> bool:
         """Publishes a text post to the Telegram channel"""

@@ -69,48 +69,55 @@ class ContentAdapter:
         """First pass: adaptation to the target style guide"""
         style_rules = STYLE_GUIDE.get("rules", [])
         style_rules_str = "\n".join([f"- {rule}" for rule in style_rules])
-        tone = STYLE_GUIDE.get("tone", {}).get("primary", "hype and gaming/tech style")
-        audience = STYLE_GUIDE.get("tone", {}).get("audience", "developers, gamers, AI enthusiasts")
+        tone = STYLE_GUIDE.get("tone", {}).get("primary", "хайповый, энергичный, мемный, но интеллектуальный")
+        audience = STYLE_GUIDE.get("tone", {}).get("audience", "разработчики, геймеры, гики, энтузиасты ИИ")
+        
+        formatting = STYLE_GUIDE.get("formatting", {})
+        max_length = formatting.get("max_length", 800)
+        list_bullet = formatting.get("list_bullets", "🔥")
         
         prompt = f"""
-You are the primary copywriter and SMM lead for the Telegram channel "НейроСофт Гейминг".
-Target Audience: {audience}
-Target Tone: {tone}
+Ты — ведущий копирайтер и SMM-лид Telegram-канала "НейроСофт Гейминг".
+Целевая аудитория: {audience}
+Тональность: {tone}
 
-Style Rules:
+Правила стиля:
 {style_rules_str}
-- Use rich, highly-specific tech/geek emojis (e.g. ⚡, 🚀, 💻, 👾, 🎮, 🛡️, 🛠️, 🎯, ⚙️, 🔔, 🌟, 💥, 🧩).
-- Highlight key phrases and bullet point headers using HTML bold tags: <b>Важные слова</b>.
-- Format list blocks or technical details using expandable quote blocks in Telegram HTML format: <blockquote expandable>Содержимое списка или цитаты</blockquote>. Every list section should be wrapped in this tag so that it becomes collapsible/expandable in Telegram!
+- Используй разнообразные тематические эмодзи (например: ⚡, 🚀, 💻, 👾, 🎮, 🛡️, 🛠️, 🎯, ⚙️, 🌟, 💥, 🧩).
+- Выделяй важные фразы и ключевые слова жирным текстом HTML: <b>Важные слова</b>.
+- Списки и технические детали форматируй с помощью раскрывающихся цитат Telegram HTML: <blockquote expandable>Содержимое списка или цитаты</blockquote>. Любой список должен быть обернут в этот тег!
+- Для пунктов списков используй СТРОГО маркер "{list_bullet}". Никогда не используй знаки "*" или "-".
+- Пост должен быть КРАТКИМ, емким и легко читаемым. Длина всего текста body должна быть СТРОГО до {max_length} символов! Пиши только самое важное, без лишней "воды" и длинных рассуждений.
 
-Format the following news item into an engaging, hype-filled Telegram post:
-News Title: {item.title}
-News URL: {item.url}
-Source: {item.source}
-Raw Data: {json.dumps(item.raw_data, ensure_ascii=False)}
+Форматируй следующую новость в вовлекающий пост:
+Заголовок новости: {item.title}
+Ссылка на новость: {item.url}
+Источник: {item.source}
+Сырые данные новости: {json.dumps(item.raw_data, ensure_ascii=False)}
 
-Instructions:
-1. Write in Russian.
-2. Formulate a catchy, energetic title (title should NOT contain HTML bold tags since it will be styled separately).
-3. Write the body of the post. Use short, punchy paragraphs, relevant emojis, and list points.
-4. Explain technical things simply and add some nerd humor or memey context.
-5. Do NOT add hashtags or the source URL to the body — those will be appended automatically later.
-6. Return ONLY a JSON object in this format:
+Инструкции по формату ответа:
+1. Пиши строго на русском языке.
+2. Сформулируй цепляющий, энергичный заголовок (поле "title", БЕЗ HTML-тегов вроде <b>, так как он стилизуется автоматически).
+3. Напиши тело поста (поле "body"). Используй короткие абзацы и эмодзи.
+4. Объясняй технические вещи просто, добавляй юмор или гик-контекст.
+5. НЕ добавляй хэштеги и ссылку на источник в поле "body" — они будут добавлены автоматически.
+6. Верни СТРОГО JSON-объект в следующем формате:
 {{
-  "title": "Catchy Russian Title",
-  "body": "Post body text in Russian..."
+  "title": "Цепляющий заголовок на русском",
+  "body": "Тело поста на русском..."
 }}
 """
         try:
-            model = genai.GenerativeModel(self.model_name)
-            response = model.generate_content(
+            from smm_engine.utils.gemini_helper import generate_content_with_retry
+            response_text = await generate_content_with_retry(
                 prompt,
+                initial_model=self.model_name,
                 generation_config={
                     "response_mime_type": "application/json",
                     "temperature": 0.7
                 }
             )
-            return json.loads(response.text)
+            return json.loads(response_text)
         except Exception as e:
             logger.error(f"Error in adaptation pass: {e}")
             return None

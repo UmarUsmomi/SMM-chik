@@ -1,6 +1,7 @@
 import os
 import httpx
 import logging
+import yaml
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 from smm_engine.config import BASE_DIR
@@ -13,6 +14,8 @@ class ImageGenerator:
         self.temp_dir.mkdir(exist_ok=True)
         # Choose a basic font path or download one
         self.font_path = self._setup_font()
+        # Load active theme configuration
+        self.theme = self._load_theme()
 
     def _setup_font(self) -> Path:
         """Downloads a clean Roboto font if not present, otherwise uses default"""
@@ -29,6 +32,51 @@ class ImageGenerator:
                 logger.error(f"Failed to download font: {e}")
                 return None
         return font_file
+
+    def _load_theme(self) -> dict:
+        """Loads branding theme configuration from themes directory"""
+        theme_path = BASE_DIR / "themes" / "default.yaml"
+        if theme_path.exists():
+            try:
+                with open(theme_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    if data:
+                        logger.info(f"Loaded branding theme: {data.get('name', 'Unnamed')}")
+                        return data
+            except Exception as e:
+                logger.error(f"Failed to load theme from {theme_path}: {e}")
+        
+        # Hardcoded fallback theme matching the structure of default.yaml
+        logger.info("Using hardcoded fallback branding theme.")
+        return {
+            "colors": {
+                "background_fallback": [13, 15, 20, 255],
+                "overlay_dim": [13, 15, 20, 150],
+                "text_primary": [255, 255, 255, 255],
+                "brand_dark": [13, 15, 20, 255],
+                "brand_accent": [217, 4, 41, 255],
+                "splatter_dark": [255, 255, 255, 180],
+                "splatter_accent": [217, 4, 41, 180],
+                "watermark_text": [255, 255, 255, 255],
+                "watermark_accent": [217, 4, 41, 255]
+            },
+            "layout": {
+                "font_size_square": 56,
+                "font_size_vertical": 42,
+                "wrap_width_square": 900,
+                "wrap_width_vertical": 600,
+                "padding_left_square": 90,
+                "padding_left_vertical": 60
+            },
+            "watermark": {
+                "font_size": 24,
+                "text_parts": [
+                    {"text": "/ игры ", "color_type": "primary"},
+                    {"text": "⚡", "color_type": "accent"},
+                    {"text": " патчи /", "color_type": "primary"}
+                ]
+            }
+        }
 
     async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
         """Downloads a relevant background image from LoremFlickr"""
@@ -53,6 +101,11 @@ class ImageGenerator:
         output_path = self.temp_dir / output_name
         
         try:
+            # Extract theme parameters
+            colors = self.theme.get("colors", {})
+            layout = self.theme.get("layout", {})
+            wm_config = self.theme.get("watermark", {})
+            
             # 1. Load and crop background or create solid dark background if failed
             if bg_path and bg_path.exists():
                 bg_img = Image.open(bg_path).convert("RGBA")
@@ -78,16 +131,18 @@ class ImageGenerator:
                     bg_img = bg_img.crop((left, top, left + min_dim, top + min_dim))
                     img = bg_img.resize((1080, 1080), Image.Resampling.LANCZOS)
             else:
-                img = Image.new("RGBA", (width, height), (13, 15, 20, 255))
+                bg_fallback = tuple(colors.get("background_fallback", [13, 15, 20, 255]))
+                img = Image.new("RGBA", (width, height), bg_fallback)
  
             # 2. Dim background to make text readable (dark semi-transparent overlay)
-            overlay = Image.new("RGBA", img.size, (13, 15, 20, 150))
+            overlay_color = tuple(colors.get("overlay_dim", [13, 15, 20, 150]))
+            overlay = Image.new("RGBA", img.size, overlay_color)
             img = Image.alpha_composite(img, overlay)
             draw = ImageDraw.Draw(img)
  
             # 3. Text preparation & wrapping
-            text_color = (255, 255, 255, 255)
-            font_size = 42 if vertical else 56
+            text_color = tuple(colors.get("text_primary", [255, 255, 255, 255]))
+            font_size = layout.get("font_size_vertical", 42) if vertical else layout.get("font_size_square", 56)
             
             # Load Font
             if self.font_path and self.font_path.exists():
@@ -95,7 +150,7 @@ class ImageGenerator:
             else:
                 font = ImageFont.load_default()
  
-            wrap_w = 600 if vertical else 900
+            wrap_w = layout.get("wrap_width_vertical", 600) if vertical else layout.get("wrap_width_square", 900)
             wrapped_lines = self._wrap_text(title, font, wrap_w)
             
             # Position text to avoid overlapping the bottom branding
@@ -105,13 +160,17 @@ class ImageGenerator:
                 # Center text vertically within the top 800px
                 y_start = (800 - len(wrapped_lines) * (font_size + 18)) // 2
             
+            pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
             for line in wrapped_lines:
-                draw.text((60 if vertical else 90, y_start), line, font=font, fill=text_color)
+                draw.text((pad_left, y_start), line, font=font, fill=text_color)
                 y_start += font_size + 18
  
             # 4. Draw Channel Branding Overlay (only for square covers)
             if not vertical:
                 import random
+                
+                brand_dark = tuple(colors.get("brand_dark", [13, 15, 20, 255]))
+                brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
                 
                 # Bottom-left black jagged block
                 points_black = [(0, 800)]
@@ -124,7 +183,7 @@ class ImageGenerator:
                     y += random.randint(-10, 10)
                     points_black.append((x, y))
                 points_black.extend([(500, 1080), (0, 1080)])
-                draw.polygon(points_black, fill=(13, 15, 20, 255))
+                draw.polygon(points_black, fill=brand_dark)
                 
                 # Bottom-right red jagged block
                 points_red = [(1080, 750)]
@@ -136,9 +195,10 @@ class ImageGenerator:
                     y += random.randint(-8, 8)
                     points_red.append((x, y))
                 points_red.extend([(700, 1080), (1080, 1080)])
-                draw.polygon(points_red, fill=(217, 4, 41, 255))
+                draw.polygon(points_red, fill=brand_accent)
                 
                 # White paint splatter / halftone simulation along black block edge
+                splatter_dark = tuple(colors.get("splatter_dark", [255, 255, 255, 180]))
                 for _ in range(120):
                     t = random.random()
                     x = int(500 * t)
@@ -146,9 +206,10 @@ class ImageGenerator:
                     cx = x + random.randint(-30, 30)
                     cy = y + random.randint(-30, 30)
                     r = random.randint(1, 4)
-                    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 180))
+                    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=splatter_dark)
                     
                 # Red paint splatter / halftone simulation along red block edge
+                splatter_accent = tuple(colors.get("splatter_accent", [217, 4, 41, 180]))
                 for _ in range(120):
                     t = random.random()
                     x = int(1080 - (1080 - 700) * t)
@@ -156,17 +217,15 @@ class ImageGenerator:
                     cx = x + random.randint(-25, 25)
                     cy = y + random.randint(-25, 25)
                     r = random.randint(1, 3)
-                    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(217, 4, 41, 180))
+                    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=splatter_accent)
                     
-                # Red 3x3 dot grid on the black block
-                dot_radius = 5
-                spacing = 15
+                # Accent 3x3 dot grid on the black block
                 start_x, start_y = 40, 1020
                 for r in range(3):
                     for c in range(3):
-                        cx = start_x + c * spacing
-                        cy = start_y + r * spacing
-                        draw.ellipse([cx - dot_radius, cy - dot_radius, cx + dot_radius, cy + dot_radius], fill=(217, 4, 41, 255))
+                        cx = start_x + c * 15
+                        cy = start_y + r * 15
+                        draw.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=brand_accent)
                         
                 # White crosses on the red block
                 def draw_cross(cx, cy, size=10, width=2):
@@ -175,31 +234,41 @@ class ImageGenerator:
                 draw_cross(980, 1020)
                 draw_cross(1030, 980)
                 
-                # Watermark text "/ игры ⚡ патчи /" in the bottom center
-                font_size_wm = 24
+                # Watermark text
+                font_size_wm = wm_config.get("font_size", 24)
                 if self.font_path and self.font_path.exists():
                     font_wm = ImageFont.truetype(str(self.font_path), font_size_wm)
                 else:
                     font_wm = ImageFont.load_default()
                     
-                part1 = "/ игры "
-                part2 = "⚡"
-                part3 = " патчи /"
+                text_parts = wm_config.get("text_parts", [])
                 
-                try:
-                    w1 = font_wm.getlength(part1)
-                    w2 = font_wm.getlength(part2)
-                    w3 = font_wm.getlength(part3)
-                except AttributeError:
-                    w1, w2, w3 = len(part1)*12, len(part2)*12, len(part3)*12
+                # Calculate widths of all parts
+                parts_measured = []
+                total_w = 0
+                for part in text_parts:
+                    text_str = part.get("text", "")
+                    color_type = part.get("color_type", "primary")
+                    if color_type == "accent":
+                        color = tuple(colors.get("watermark_accent", [217, 4, 41, 255]))
+                    else:
+                        color = tuple(colors.get("watermark_text", [255, 255, 255, 255]))
+                        
+                    try:
+                        w = font_wm.getlength(text_str)
+                    except AttributeError:
+                        w = len(text_str) * 12
+                        
+                    total_w += w
+                    parts_measured.append((text_str, color, w))
                     
-                total_w = w1 + w2 + w3
                 start_x = (1080 - total_w) // 2
                 y_pos = 1025
                 
-                draw.text((start_x, y_pos), part1, font=font_wm, fill=(255, 255, 255, 255))
-                draw.text((start_x + w1, y_pos), part2, font=font_wm, fill=(217, 4, 41, 255)) # red lightning symbol
-                draw.text((start_x + w1 + w2, y_pos), part3, font=font_wm, fill=(255, 255, 255, 255))
+                current_x = start_x
+                for text_str, color, w in parts_measured:
+                    draw.text((current_x, y_pos), text_str, font=font_wm, fill=color)
+                    current_x += w
  
             # Save as JPEG
             final_img = img.convert("RGB")
@@ -219,12 +288,9 @@ class ImageGenerator:
         
         for word in words:
             test_line = " ".join(current_line + [word])
-            # Check length of the line
-            # Pillow 10+ uses getlength or getbbox
             try:
                 w = font.getlength(test_line)
             except AttributeError:
-                # Fallback for old PIL versions or default font
                 w = len(test_line) * 12
                 
             if w <= max_width:

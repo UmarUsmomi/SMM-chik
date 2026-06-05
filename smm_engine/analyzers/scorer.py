@@ -37,18 +37,19 @@ class NewsScorer:
         prompt = self._build_prompt(item)
 
         try:
-            model = genai.GenerativeModel(self.model_name)
+            from smm_engine.utils.gemini_helper import generate_content_with_retry
             
             # Request JSON output
-            response = model.generate_content(
+            response_text = await generate_content_with_retry(
                 prompt,
+                initial_model=self.model_name,
                 generation_config={
                     "response_mime_type": "application/json",
                     "temperature": 0.2
                 }
             )
             
-            result = json.loads(response.text)
+            result = json.loads(response_text)
             
             # Ensure all keys exist
             for key in ["relevance", "freshness", "virality", "uniqueness", "quality", "total"]:
