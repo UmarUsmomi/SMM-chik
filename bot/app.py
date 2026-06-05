@@ -285,6 +285,19 @@ async def api_force_pipeline(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_pipeline_task)
     return {"status": "ok", "message": "Pipeline started"}
 
+@app.get("/api/test-models")
+async def test_models():
+    import google.generativeai as genai
+    from smm_engine.config import GEMINI_API_KEY
+    if not GEMINI_API_KEY:
+        return {"error": "GEMINI_API_KEY is not configured"}
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        models = genai.list_models()
+        return {"models": [m.name for m in models]}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/health")
 @app.get("/healthz")
 def health_check():
