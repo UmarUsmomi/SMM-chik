@@ -134,7 +134,7 @@ class SMMPipeline:
                     
                     adapted = await self.adapter.adapt_news(news_item)
                     if adapted:
-                        success = await self.publisher.publish_text(adapted["title"], adapted["text"])
+                        success = await self.publisher.publish_post_with_cover(adapted["title"], adapted["text"])
                         if success:
                             # Also publish to Threads
                             await self.threads_pub.publish_post(f"{adapted['title']}\n\n{adapted['text']}")

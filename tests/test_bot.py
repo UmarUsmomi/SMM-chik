@@ -36,7 +36,7 @@ def test_api_toggle_pause():
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok", "is_paused": True}
 
-@patch("bot.app.publisher.publish_text", new_callable=AsyncMock)
+@patch("bot.app.publisher.publish_post_with_cover", new_callable=AsyncMock)
 def test_api_moderate_approve(mock_pub):
     mock_pub.return_value = True
     import bot.app
@@ -118,7 +118,7 @@ def test_bot_queue_empty(mock_send):
 @patch("bot.app.send_bot_message", new_callable=AsyncMock)
 @patch("bot.app.edit_message_text", new_callable=AsyncMock)
 @patch("bot.app.answer_callback_query", new_callable=AsyncMock)
-@patch("bot.app.publisher.publish_text", new_callable=AsyncMock)
+@patch("bot.app.publisher.publish_post_with_cover", new_callable=AsyncMock)
 def test_bot_approve(mock_pub, mock_answer, mock_edit, mock_send):
     # Save a mock news item to database first
     import bot.app

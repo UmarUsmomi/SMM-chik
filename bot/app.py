@@ -173,7 +173,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                 await answer_callback_query(cb_id, "Публикую...")
                 
                 # Publish
-                success = await publisher.publish_text(item["adapted_title"], item["adapted_text"])
+                success = await publisher.publish_post_with_cover(item["adapted_title"], item["adapted_text"])
                 if success:
                     # Also publish to Threads
                     from smm_engine.publishers.threads_pub import ThreadsPublisher
@@ -262,7 +262,7 @@ async def api_moderate_item(item_id: int, req: ModerateReq):
         raise HTTPException(status_code=404, detail="Item not found")
         
     if req.action == "approve":
-        success = await publisher.publish_text(item["adapted_title"], item["adapted_text"])
+        success = await publisher.publish_post_with_cover(item["adapted_title"], item["adapted_text"])
         if success:
             # Also publish to Threads
             from smm_engine.publishers.threads_pub import ThreadsPublisher

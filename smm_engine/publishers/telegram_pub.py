@@ -92,3 +92,32 @@ class TelegramPublisher:
         except Exception as e:
             logger.error(f"Error publishing photo to Telegram: {e}")
             return False
+
+    async def publish_post_with_cover(self, title: str, text: str) -> bool:
+        """Generates a branded cover image and publishes it as a photo post, falling back to text on failure"""
+        try:
+            from smm_engine.media.image_handler import ImageGenerator
+            import re
+            img_gen = ImageGenerator()
+            words = re.findall(r'\w+', title)
+            # Take first 3 words for search
+            keywords = ",".join(words[:3]) if words else "technology,gaming"
+            
+            logger.info(f"Generating cover for post with keywords: {keywords}")
+            bg_path = await img_gen.fetch_background(keywords)
+            cover_path = img_gen.create_cover(title, bg_path)
+            
+            if cover_path and cover_path.exists():
+                success = await self.publish_photo(title, text, str(cover_path))
+                # Delete temporary cover path to save space
+                try:
+                    cover_path.unlink()
+                    if bg_path and bg_path.exists():
+                        bg_path.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp cover files: {e}")
+                return success
+        except Exception as e:
+            logger.error(f"Failed to publish post with cover, falling back to text: {e}")
+            
+        return await self.publish_text(title, text)

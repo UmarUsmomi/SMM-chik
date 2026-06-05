@@ -53,7 +53,7 @@ async def test_smm_pipeline_run():
         mock_adapter_class.return_value = mock_adapter_inst
         
         mock_publisher_inst = MagicMock()
-        mock_publisher_inst.publish_text = AsyncMock(return_value=True)
+        mock_publisher_inst.publish_post_with_cover = AsyncMock(return_value=True)
         mock_publisher_class.return_value = mock_publisher_inst
 
         # 3. Instantiate pipeline and run
