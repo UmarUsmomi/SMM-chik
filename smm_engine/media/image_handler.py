@@ -35,7 +35,8 @@ class ImageGenerator:
 
     def _load_theme(self) -> dict:
         """Loads branding theme configuration from themes directory"""
-        theme_path = BASE_DIR / "themes" / "default.yaml"
+        from smm_engine.config import BRANDING_THEME
+        theme_path = BASE_DIR / "themes" / f"{BRANDING_THEME}.yaml"
         if theme_path.exists():
             try:
                 with open(theme_path, "r", encoding="utf-8") as f:
@@ -77,6 +78,34 @@ class ImageGenerator:
                 ]
             }
         }
+
+    async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
+        """Generates a relevant background image using Pollinations AI (free AI image generation)"""
+        import urllib.parse
+        img_path = self.temp_dir / ("bg_ai_v.jpg" if vertical else "bg_ai.jpg")
+        width, height = (720, 1280) if vertical else (1080, 1080)
+        
+        # Optimize prompt for Pollinations AI
+        clean_keywords = keywords.replace(",", " ")
+        prompt = f"futuristic cyber tech style vector art representation of {clean_keywords}, high resolution, neon colors, synthwave gaming aesthetic"
+        encoded_prompt = urllib.parse.quote(prompt)
+        
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&private=true"
+        
+        logger.info(f"Generating AI cover background using Pollinations: {prompt[:50]}...")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=25)
+                if resp.status_code == 200:
+                    with open(img_path, "wb") as f:
+                        f.write(resp.content)
+                    logger.info("Successfully generated AI background cover.")
+                    return img_path
+                else:
+                    logger.warning(f"Failed to generate AI background. Status: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error generating AI background image: {e}")
+        return None
 
     async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
         """Downloads a relevant background image from LoremFlickr"""

@@ -18,6 +18,10 @@ ADAPTER_MODEL = os.getenv("ADAPTER_MODEL", "gemini-3.1-flash-lite")
 HUMANIZER_MODEL = os.getenv("HUMANIZER_MODEL", "gemini-3.1-flash-lite")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
+BRANDING_THEME = os.getenv("BRANDING_THEME", "default")
+if BRANDING_THEME:
+    BRANDING_THEME = BRANDING_THEME.strip().strip("'\"").lower()
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if TELEGRAM_BOT_TOKEN:
     TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN.strip().strip("'\"")

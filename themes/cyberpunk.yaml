@@ -1,0 +1,36 @@
+# SMM Automator Branding Theme Configuration - Cyberpunk Style
+
+name: "Cyberpunk neon theme"
+
+colors:
+  background_fallback: [10, 10, 15, 255] # RGBA
+  overlay_dim: [10, 10, 15, 170] # RGBA
+  text_primary: [255, 255, 255, 255] # RGBA
+  
+  # Branding elements
+  brand_dark: [10, 10, 15, 255]
+  brand_accent: [252, 238, 10, 255] # Neon Yellow
+  
+  # Decorative elements
+  splatter_dark: [0, 240, 255, 180] # Neon Cyan
+  splatter_accent: [255, 0, 85, 180] # Neon Red/Pink
+  watermark_text: [0, 240, 255, 255] # Neon Cyan
+  watermark_accent: [252, 238, 10, 255] # Neon Yellow
+
+layout:
+  font_size_square: 56
+  font_size_vertical: 42
+  wrap_width_square: 900
+  wrap_width_vertical: 600
+  padding_left_square: 90
+  padding_left_vertical: 60
+
+watermark:
+  font_size: 24
+  text_parts:
+    - text: "/ cyberpunk "
+      color_type: "primary"
+    - text: "⚡"
+      color_type: "accent"
+    - text: " 2077 /"
+      color_type: "primary"

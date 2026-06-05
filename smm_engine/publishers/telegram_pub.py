@@ -161,7 +161,11 @@ class TelegramPublisher:
             keywords = ",".join(words[:3]) if words else "technology,gaming"
             
             logger.info(f"Generating cover for post with keywords: {keywords}")
-            bg_path = await img_gen.fetch_background(keywords)
+            # Try AI generation first
+            bg_path = await img_gen.generate_ai_background(keywords)
+            if not bg_path:
+                logger.info("AI background generation failed or skipped. Falling back to stock image...")
+                bg_path = await img_gen.fetch_background(keywords)
             cover_path = img_gen.create_cover(title, bg_path)
             
             if cover_path and cover_path.exists():

@@ -133,3 +133,46 @@ def test_api_logs():
     resp = client.get("/api/logs")
     assert resp.status_code == 200
     assert "logs" in resp.json()
+
+# 5. Test dynamic theme loading
+def test_dynamic_theme_loading():
+    from smm_engine.media.image_handler import ImageGenerator
+    
+    with patch.object(ImageGenerator, "_setup_font", return_value=None):
+        # Test Dracula theme loading
+        with patch("smm_engine.config.BRANDING_THEME", "dracula"):
+            gen = ImageGenerator()
+            assert gen.theme.get("name") == "Dracula purple/pink theme"
+            colors = gen.theme.get("colors", {})
+            assert colors.get("brand_accent") == [255, 121, 198, 255]
+            
+        # Test Cyberpunk theme loading
+        with patch("smm_engine.config.BRANDING_THEME", "cyberpunk"):
+            gen = ImageGenerator()
+            assert gen.theme.get("name") == "Cyberpunk neon theme"
+            colors = gen.theme.get("colors", {})
+            assert colors.get("brand_accent") == [252, 238, 10, 255]
+
+# 6. Test Pollinations AI background image generation
+@pytest.mark.asyncio
+async def test_pollinations_ai_bg_generation():
+    from smm_engine.media.image_handler import ImageGenerator
+    
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b"fake_image_content"
+    
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.get.return_value = mock_resp
+    
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        # Patch _setup_font to avoid any synchronous font downloads during tests
+        with patch.object(ImageGenerator, "_setup_font", return_value=None):
+            gen = ImageGenerator()
+            res_path = await gen.generate_ai_background("test,keywords")
+            
+            assert res_path is not None
+            assert "bg_ai.jpg" in str(res_path)
+            mock_client.get.assert_called_once()
+            assert "image.pollinations.ai" in mock_client.get.call_args[0][0]

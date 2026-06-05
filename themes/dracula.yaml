@@ -1,0 +1,36 @@
+# SMM Automator Branding Theme Configuration - Dracula Style
+
+name: "Dracula purple/pink theme"
+
+colors:
+  background_fallback: [40, 42, 54, 255] # RGBA
+  overlay_dim: [40, 42, 54, 160] # RGBA
+  text_primary: [248, 248, 242, 255] # RGBA
+  
+  # Branding elements
+  brand_dark: [40, 42, 54, 255]
+  brand_accent: [255, 121, 198, 255] # Pink
+  
+  # Decorative elements
+  splatter_dark: [189, 147, 249, 180] # Purple
+  splatter_accent: [255, 121, 198, 180] # Pink
+  watermark_text: [248, 248, 242, 255]
+  watermark_accent: [255, 121, 198, 255]
+
+layout:
+  font_size_square: 56
+  font_size_vertical: 42
+  wrap_width_square: 900
+  wrap_width_vertical: 600
+  padding_left_square: 90
+  padding_left_vertical: 60
+
+watermark:
+  font_size: 24
+  text_parts:
+    - text: "/ dracula "
+      color_type: "primary"
+    - text: "👾"
+      color_type: "accent"
+    - text: " geek /"
+      color_type: "primary"
