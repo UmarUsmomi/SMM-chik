@@ -298,6 +298,28 @@ async def test_models():
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/test-telegram")
+async def test_telegram():
+    import httpx
+    from smm_engine.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+        return {"error": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID is not configured"}
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHANNEL_ID,
+        "text": "🛠️ Тестовое сообщение от SMM-панели. Если вы видите это, значит права бота настроены верно!"
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, timeout=10)
+            return {
+                "status_code": resp.status_code,
+                "response": resp.json()
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/health")
 @app.get("/healthz")
 def health_check():
