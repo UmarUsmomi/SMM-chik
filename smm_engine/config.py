@@ -14,9 +14,9 @@ if GEMINI_API_KEY:
     GEMINI_API_KEY = GEMINI_API_KEY.strip().strip("'\"")
 
 SCORER_MODEL = os.getenv("SCORER_MODEL", "gemini-3.1-flash-lite")
-ADAPTER_MODEL = os.getenv("ADAPTER_MODEL", "gemini-2.0-flash")
-HUMANIZER_MODEL = os.getenv("HUMANIZER_MODEL", "gemini-2.0-flash")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+ADAPTER_MODEL = os.getenv("ADAPTER_MODEL", "gemini-3.1-flash-lite")
+HUMANIZER_MODEL = os.getenv("HUMANIZER_MODEL", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if TELEGRAM_BOT_TOKEN:
