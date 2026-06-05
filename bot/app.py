@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import collections
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -11,9 +12,29 @@ from smm_engine.storage.database import DatabaseManager
 from smm_engine.publishers.telegram_pub import TelegramPublisher
 from smm_engine.pipeline import SMMPipeline
 
+# Configure in-memory logging handler to view logs via API
+class MemoryLogHandler(logging.Handler):
+    def __init__(self, capacity=300):
+        super().__init__()
+        self.capacity = capacity
+        self.buffer = collections.deque(maxlen=capacity)
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.buffer.append(msg)
+        except Exception:
+            self.handleError(record)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("telegram_bot")
+
+memory_log_handler = MemoryLogHandler()
+memory_log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(memory_log_handler)
+# Also add it to all relevant loggers
+logging.getLogger("smm_engine").addHandler(memory_log_handler)
 
 app = FastAPI(title="SMM Automator Queue Bot")
 db = DatabaseManager()
@@ -462,6 +483,10 @@ async def test_telegram():
             }
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/api/logs")
+async def get_logs():
+    return {"logs": list(memory_log_handler.buffer)}
 
 @app.get("/api/db-debug")
 async def db_debug():
