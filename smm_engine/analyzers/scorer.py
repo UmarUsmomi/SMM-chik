@@ -112,6 +112,6 @@ You must respond ONLY with a JSON object in this format:
   "uniqueness": number,
   "quality": number,
   "total": number,
-  "reason": "Brief English or Russian explanation of the score"
+  "reason": "A brief explanation of the score strictly in Russian language (1-2 sentences explaining why this news is relevant and interesting for our geek/gamer audience)"
 }}
 """

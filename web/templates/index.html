@@ -399,13 +399,13 @@
                     {% for item in queue_items %}
                         <div class="queue-item" id="item-{{ item.id }}">
                             <div class="queue-header">
-                                <span class="queue-title">{{ item.adapted_title }}</span>
+                                <span class="queue-title">{{ item.adapted_title if item.adapted_title else item.title }}</span>
                                 <span class="queue-score {% if item.score >= 80 %}score-high{% else %}score-med{% endif %}">{{ item.score }}/100</span>
                             </div>
                             <div class="queue-meta">
                                 <span>Источник: {{ item.source }}</span> • <span>Оценка ИИ: {{ item.score_reason }}</span>
                             </div>
-                            <div class="queue-preview">{{ item.adapted_text }}</div>
+                            <div class="queue-preview">{% if item.adapted_text %}{{ item.adapted_text }}{% else %}⚠️ <i>Текст не был адаптирован из-за временных лимитов ИИ. При нажатии «Опубликовать» система автоматически сгенерирует текст поста на лету.</i>{% endif %}</div>
                             <div class="queue-actions">
                                 <button class="btn btn-approve" onclick="moderateItem({{ item.id }}, 'approve')">✅ Опубликовать</button>
                                 <button class="btn btn-reject" onclick="moderateItem({{ item.id }}, 'reject')">❌ Отклонить</button>

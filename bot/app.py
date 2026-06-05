@@ -359,12 +359,43 @@ async def api_moderate_item(item_id: int, req: ModerateReq):
         raise HTTPException(status_code=404, detail="Item not found")
         
     if req.action == "approve":
-        success = await publisher.publish_post_with_cover(item["adapted_title"], item["adapted_text"])
+        title = item["adapted_title"]
+        text = item["adapted_text"]
+        
+        # If it failed to adapt earlier (None due to API rate limit), let's adapt it on the fly now!
+        if not title or not text:
+            logger.info(f"Item {item_id} has no adapted content. Adapting on the fly...")
+            from smm_engine.content.adapter import ContentAdapter
+            from smm_engine.scrapers.base import NewsItem
+            adapter = ContentAdapter()
+            news_item = NewsItem(
+                source=item["source"],
+                source_id=item["source_id"],
+                title=item["title"],
+                url=item["url"],
+                raw_data={}
+            )
+            try:
+                adapted = await adapter.adapt_news(news_item)
+                if adapted and adapted.get("title") and adapted.get("text"):
+                    title = adapted["title"]
+                    text = adapted["text"]
+                    # Save it so we don't have to re-adapt next time
+                    db.save_adapted_content(item_id, title, text, status=item["status"])
+                else:
+                    raise Exception("Adapter returned empty content")
+            except Exception as ex:
+                logger.error(f"Failed to adapt item {item_id} on the fly: {ex}")
+                # Fallback to original title and url
+                title = item["title"]
+                text = f"<b>{item['title']}</b>"
+                
+        success = await publisher.publish_post_with_cover(title, text)
         if success:
             # Also publish to Threads
             from smm_engine.publishers.threads_pub import ThreadsPublisher
             threads_pub = ThreadsPublisher()
-            await threads_pub.publish_post(f"{item['adapted_title']}\n\n{item['adapted_text']}")
+            await threads_pub.publish_post(f"{title}\n\n{text}")
             
             db.mark_published(item_id)
             return {"status": "ok", "action": "approved"}
