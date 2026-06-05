@@ -463,6 +463,25 @@ async def test_telegram():
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/db-debug")
+async def db_debug():
+    try:
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, source, title, score, status, adapted_title, adapted_text, score_reason FROM news_items ORDER BY id DESC LIMIT 20"
+        )
+        rows = cursor.fetchall()
+        cols = [col[0] for col in cursor.description]
+        items = []
+        for r in rows:
+            items.append(dict(zip(cols, r)))
+        cursor.close()
+        conn.close()
+        return {"items": items}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/health")
 @app.get("/healthz")
 def health_check():
