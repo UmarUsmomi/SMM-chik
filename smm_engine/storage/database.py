@@ -18,7 +18,20 @@ class DatabaseManager:
     def _get_connection(self):
         if self.use_postgres:
             import psycopg2
-            return psycopg2.connect(DATABASE_URL)
+            try:
+                return psycopg2.connect(DATABASE_URL)
+            except Exception as e:
+                logger.error("\n" + "="*80 + "\n" +
+                             f"❌ DATABASE CONNECTION ERROR:\n"
+                             f"Failed to connect to the PostgreSQL database using DATABASE_URL.\n"
+                             f"Error details: {e}\n"
+                             f"Make sure you are using the Supabase Connection Pooler (port 6543) instead of direct connection (port 5432).\n"
+                             f"Direct connections (5432) do not support IPv4 on Render's free tier.\n" +
+                             "="*80 + "\n")
+                raise RuntimeError(
+                    f"❌ DATABASE CONNECTION ERROR: Failed to connect to the database. "
+                    f"Ensure DATABASE_URL is correct and uses port 6543. Original error: {e}"
+                ) from e
         else:
             return sqlite3.connect(SQLITE_DB_PATH)
 
