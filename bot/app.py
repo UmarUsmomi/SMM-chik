@@ -98,16 +98,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                 
             elif text == "/status":
                 # Get stats from database
-                conn = db._get_connection()
-                cursor = conn.cursor()
-                
-                stats = {}
-                for status in ['parsed', 'pending_review', 'published', 'rejected']:
-                    cursor.execute("SELECT COUNT(id) FROM news_items WHERE status = ?", (status,))
-                    stats[status] = cursor.fetchone()[0]
-                    
-                cursor.close()
-                conn.close()
+                stats = db.get_stats()
                 
                 is_paused = db.get_setting("is_paused", "false") == "true"
                 pause_status = "⏸️ ПРИОСТАНОВЛЕНА (все посты в очередь)" if is_paused else "▶️ АКТИВНА (85+ публикуются авто)"
@@ -223,14 +214,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
 async def dashboard_view(request: Request):
     """Renders the HTML Dashboard"""
     # Fetch stats
-    conn = db._get_connection()
-    cursor = conn.cursor()
-    stats = {}
-    for status in ['parsed', 'pending_review', 'published', 'rejected']:
-        cursor.execute("SELECT COUNT(id) FROM news_items WHERE status = ?", (status,))
-        stats[status] = cursor.fetchone()[0]
-    cursor.close()
-    conn.close()
+    stats = db.get_stats()
 
     is_paused = db.get_setting("is_paused", "false") == "true"
     queue_items = db.get_queue(status='pending_review', limit=15)

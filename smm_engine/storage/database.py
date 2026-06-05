@@ -361,3 +361,16 @@ class DatabaseManager:
         cursor.close()
         conn.close()
         return results
+
+    def get_stats(self) -> dict:
+        """Gets count of news items by status"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if self.use_postgres else "?"
+        stats = {}
+        for status in ['parsed', 'pending_review', 'published', 'rejected']:
+            cursor.execute(f"SELECT COUNT(id) FROM news_items WHERE status = {placeholder}", (status,))
+            stats[status] = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return stats
