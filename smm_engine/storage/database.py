@@ -71,6 +71,7 @@ class DatabaseManager:
             import psycopg2
             try:
                 new_conn = psycopg2.connect(DATABASE_URL)
+                new_conn.autocommit = True  # Enable autocommit to prevent transactions from hanging open
                 proxy = ConnectionProxy(new_conn)
                 _conn_var.set(proxy)
                 return proxy
@@ -88,6 +89,7 @@ class DatabaseManager:
                 ) from e
         else:
             new_conn = sqlite3.connect(SQLITE_DB_PATH)
+            new_conn.isolation_level = None  # Enable autocommit for SQLite
             proxy = ConnectionProxy(new_conn)
             _conn_var.set(proxy)
             return proxy

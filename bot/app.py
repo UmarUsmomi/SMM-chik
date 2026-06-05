@@ -274,15 +274,18 @@ async def dashboard_view(request: Request):
             }
         )
     except Exception as e:
-        logger.error(f"Error loading dashboard data: {e}")
+        import traceback
+        import html
+        error_details = traceback.format_exc()
+        logger.error(f"Error loading dashboard data: {e}\n{error_details}")
         return HTMLResponse(
-            content="""
+            content=f"""
             <html>
                 <head>
                     <title>База данных перегружена</title>
                     <meta charset="utf-8">
                     <style>
-                        body {
+                        body {{
                             background-color: #0d0f14;
                             color: #f4f5f6;
                             font-family: sans-serif;
@@ -292,10 +295,11 @@ async def dashboard_view(request: Request):
                             justify-content: center;
                             height: 100vh;
                             margin: 0;
-                        }
-                        h1 { color: #eb5e28; margin-bottom: 10px; }
-                        p { color: #8b9bb4; max-width: 500px; text-align: center; line-height: 1.6; margin-bottom: 20px; }
-                        button {
+                            padding: 20px;
+                        }}
+                        h1 {{ color: #eb5e28; margin-bottom: 10px; text-align: center; }}
+                        p {{ color: #8b9bb4; max-width: 500px; text-align: center; line-height: 1.6; margin-bottom: 20px; }}
+                        button {{
                             background: linear-gradient(135deg, #eb5e28, #d85724);
                             border: none;
                             color: white;
@@ -305,14 +309,29 @@ async def dashboard_view(request: Request):
                             font-weight: bold;
                             box-shadow: 0 4px 15px rgba(235, 94, 40, 0.3);
                             transition: transform 0.2s;
-                        }
-                        button:hover { transform: translateY(-1px); }
+                        }}
+                        button:hover {{ transform: translateY(-1px); }}
+                        pre {{
+                            background: #1c2333;
+                            color: #ffb703;
+                            padding: 15px;
+                            border-radius: 8px;
+                            max-width: 85%;
+                            overflow-x: auto;
+                            font-size: 12px;
+                            margin-top: 30px;
+                            text-align: left;
+                            border-left: 4px solid #d90429;
+                            white-space: pre-wrap;
+                            word-break: break-all;
+                        }}
                     </style>
                 </head>
                 <body>
                     <h1>База данных временно недоступна</h1>
                     <p>Похоже, к базе данных выполняется слишком много одновременных подключений из-за частых запросов парсинга. Пожалуйста, подождите 15-30 секунд и обновите страницу.</p>
                     <button onclick="window.location.reload()">Обновить страницу 🔄</button>
+                    <pre><b>Детали ошибки для разработчика:</b><br><br>{html.escape(error_details)}</pre>
                 </body>
             </html>
             """,
