@@ -116,6 +116,14 @@ class TelegramPublisher:
             return True
 
         caption = f"<b>{self._escape_html(title)}</b>\n\n{self._format_markdown_to_html(text)}"
+        
+        # Check if caption is too long for Telegram (max 1024 characters including HTML tags)
+        send_separately = False
+        if len(caption) > 1024:
+            logger.warning(f"Caption is too long ({len(caption)} chars). Sending photo with title, and full text as a separate message.")
+            caption = f"<b>{self._escape_html(title)}</b>\n\n👇 Текст новости ниже:"
+            send_separately = True
+
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
         
         try:
@@ -141,7 +149,13 @@ class TelegramPublisher:
                         resp = await client.post(url, data=data, files=files, timeout=30)
                         
                 if resp.status_code == 200:
-                    logger.info("Successfully published photo post to Telegram")
+                    logger.info("Successfully published photo to Telegram")
+                    if send_separately:
+                        try:
+                            # Send full text separately
+                            await self.publish_text(title, text)
+                        except Exception as ex:
+                            logger.error(f"Failed to send follow-up text post separately: {ex}")
                     return True
                 else:
                     logger.error(f"Failed to publish photo to Telegram. Status: {resp.status_code}, Body: {resp.text}")

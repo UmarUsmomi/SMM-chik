@@ -248,3 +248,43 @@ def test_database_clear_and_reset_command(tmp_path):
                 mock_send.assert_called_once()
                 assert "База данных новостей очищена" in mock_send.call_args[0][1]
                 assert len(db_mgr.get_recent_items()) == 0
+
+# 9. Test Caption Split when long text is sent
+@pytest.mark.asyncio
+async def test_telegram_publisher_caption_split():
+    from unittest.mock import mock_open
+    from smm_engine.publishers.telegram_pub import TelegramPublisher
+    pub = TelegramPublisher()
+    pub.enabled = True
+    pub.bot_token = "dummy_token"
+    pub.channel_id = "dummy_channel"
+    
+    # Create text that will exceed 1024 characters
+    long_text = "A" * 1200
+    
+    # Mock httpx.AsyncClient.post
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.post.return_value = mock_response
+    
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("builtins.open", mock_open(read_data=b"fake_image")):
+            success = await pub.publish_photo("Short Title", long_text, "fake_path.jpg")
+            
+            assert success is True
+            # Expect 2 calls: one to sendPhoto (for the cover image) and one to sendMessage (for the long text)
+            assert mock_client.post.call_count == 2
+            
+            # First call should be sendPhoto
+            args_photo = mock_client.post.call_args_list[0]
+            assert "sendPhoto" in args_photo[0][0]
+            assert "Short Title" in args_photo[1]["data"]["caption"]
+            assert "Текст новости ниже" in args_photo[1]["data"]["caption"]
+            
+            # Second call should be sendMessage
+            args_text = mock_client.post.call_args_list[1]
+            assert "sendMessage" in args_text[0][0]
+            assert "Short Title" in args_text[1]["json"]["text"]

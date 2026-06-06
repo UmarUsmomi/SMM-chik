@@ -96,7 +96,8 @@ class ImageGenerator:
         prompt = f"futuristic cyber tech style vector art representation of {clean_keywords}, high resolution, neon colors, synthwave gaming aesthetic"
         encoded_prompt = urllib.parse.quote(prompt)
         
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true&private=true"
+        # Remove private=true to avoid payment/quota errors on Pollinations AI
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
         
         logger.info(f"Generating AI cover background using Pollinations: {prompt[:50]}...")
         try:
@@ -112,12 +113,15 @@ class ImageGenerator:
         except Exception as e:
             logger.error(f"Error generating AI background image: {e}")
         return None
-
+ 
     async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
         """Downloads a relevant background image from LoremFlickr"""
         img_path = self.temp_dir / ("bg_download_v.jpg" if vertical else "bg_download.jpg")
         width, height = (720, 1280) if vertical else (1280, 720)
-        url = f"https://loremflickr.com/{width}/{height}/{keywords}"
+        
+        # Clean and format keywords for LoremFlickr URL path (comma-separated, no spaces)
+        clean_keywords = ",".join([k.strip().replace(" ", ",") for k in keywords.split(",") if k.strip()])
+        url = f"https://loremflickr.com/{width}/{height}/{clean_keywords}"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, timeout=15, follow_redirects=True)

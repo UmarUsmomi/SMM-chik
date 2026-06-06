@@ -106,9 +106,17 @@ class SMMPipeline:
         # Check all un-published items in database to find the best candidate
         # This includes items parsed during this run AND previously queued/parsed but not published
         try:
-            # Get parsed items
+            # Get parsed items from DB and newly processed items, removing duplicates by ID
             parsed_items = self.db.get_queue(status='parsed', limit=30)
-            all_candidates = parsed_items + [x for x in new_items_processed if x.get("status") == "parsed"]
+            seen_ids = set()
+            all_candidates = []
+            for item in (parsed_items + new_items_processed):
+                if not item:
+                    continue
+                item_id = item.get("id")
+                if item_id and item_id not in seen_ids:
+                    seen_ids.add(item_id)
+                    all_candidates.append(item)
             
             # Sort candidates by score descending
             all_candidates = sorted(all_candidates, key=lambda x: x.get("score", 0), reverse=True)
@@ -119,7 +127,8 @@ class SMMPipeline:
 
             adapted_count = 0
             max_adaptations_per_run = 3
-
+            published_any = False
+ 
             # Process candidates according to threshold
             for candidate in all_candidates:
                 score = candidate.get("score", 0)
@@ -136,7 +145,7 @@ class SMMPipeline:
                 
                 is_paused = self.db.get_setting("is_paused", "false") == "true"
                 
-                if score >= AUTO_PUBLISH_THRESHOLD and not is_paused:
+                if score >= AUTO_PUBLISH_THRESHOLD and not is_paused and not published_any:
                     # A. Auto-Publish!
                     logger.info(f"Auto-publishing candidate '{candidate.get('title')}' with score {score}")
                     
@@ -149,14 +158,17 @@ class SMMPipeline:
                             self.db.save_adapted_content(item_id, adapted["title"], adapted["text"], status='published')
                             self.db.mark_published(item_id)
                             summary["published"] += 1
-                            # We only publish one story per run to avoid spamming the channel
-                            break
+                            published_any = True
+                            continue
                         else:
                             # If publishing failed, save adapted content and keep in queue
                             self.db.save_adapted_content(item_id, adapted["title"], adapted["text"], status='pending_review')
                             summary["queued"] += 1
+                            continue
                 
-                elif score >= QUEUE_THRESHOLD:
+                # If we cannot auto-publish (paused, already published one, or score is 70-84)
+                # but score is high enough to be queued (>=70)
+                if score >= QUEUE_THRESHOLD or (score >= AUTO_PUBLISH_THRESHOLD and (is_paused or published_any)):
                     # B. Add to review queue
                     logger.info(f"Queuing candidate '{candidate.get('title')}' with score {score}")
                     
@@ -164,6 +176,9 @@ class SMMPipeline:
                     # so it will be adapted/processed in the next run.
                     if adapted_count >= max_adaptations_per_run:
                         logger.info(f"Skipping adaptation for '{candidate.get('title')}' in this run (max_adaptations_per_run reached).")
+                        # Transition to pending_review but mark text as None/waiting
+                        self.db.update_scoring(item_id, score, candidate.get("score_reason"), status='pending_review')
+                        summary["queued"] += 1
                         continue
                     
                     # Adapt text beforehand so it is ready for approval in Telegram Bot
