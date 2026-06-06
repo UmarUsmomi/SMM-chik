@@ -249,7 +249,7 @@ def test_database_clear_and_reset_command(tmp_path):
                 assert "База данных новостей очищена" in mock_send.call_args[0][1]
                 assert len(db_mgr.get_recent_items()) == 0
 
-# 9. Test Caption Split when long text is sent
+# 9. Test Caption Truncation when long text is sent
 @pytest.mark.asyncio
 async def test_telegram_publisher_caption_split():
     from unittest.mock import mock_open
@@ -275,16 +275,12 @@ async def test_telegram_publisher_caption_split():
             success = await pub.publish_photo("Short Title", long_text, "fake_path.jpg")
             
             assert success is True
-            # Expect 2 calls: one to sendPhoto (for the cover image) and one to sendMessage (for the long text)
-            assert mock_client.post.call_count == 2
+            # Expect only 1 call to sendPhoto with truncated caption
+            assert mock_client.post.call_count == 1
             
-            # First call should be sendPhoto
             args_photo = mock_client.post.call_args_list[0]
             assert "sendPhoto" in args_photo[0][0]
-            assert "Short Title" in args_photo[1]["data"]["caption"]
-            assert "Текст новости ниже" in args_photo[1]["data"]["caption"]
-            
-            # Second call should be sendMessage
-            args_text = mock_client.post.call_args_list[1]
-            assert "sendMessage" in args_text[0][0]
-            assert "Short Title" in args_text[1]["json"]["text"]
+            caption = args_photo[1]["data"]["caption"]
+            assert "Short Title" in caption
+            assert len(caption) <= 1024
+            assert caption.endswith("...")

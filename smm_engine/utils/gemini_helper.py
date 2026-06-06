@@ -14,8 +14,8 @@ if GEMINI_API_KEY:
 # List of models to try in case of quota exhaustion
 FALLBACK_MODELS = [
     "gemini-3.1-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b"
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash"
 ]
 
 def _is_daily_quota_error(error_msg: str) -> bool:
@@ -47,9 +47,9 @@ async def generate_content_with_retry(prompt: str, initial_model: str, generatio
         logger.info(f"Attempting content generation using model: {model_name}")
         model = genai.GenerativeModel(model_name)
         
-        # We will try up to 3 times for rate limit (RPM) errors per model
-        max_retries = 3
-        backoff = 2.0
+        # We will try up to 2 times for rate limit (RPM) errors per model
+        max_retries = 2
+        backoff = 15.0  # Start with 15s to respect the 15 RPM quota
         
         for attempt in range(max_retries):
             try:

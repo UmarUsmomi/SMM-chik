@@ -115,14 +115,20 @@ class TelegramPublisher:
             logger.info(f"[DRY-RUN] Publishing photo post:\nTitle: {title}\nPhoto: {photo_url_or_path}\nText:\n{text}")
             return True
 
-        caption = f"<b>{self._escape_html(title)}</b>\n\n{self._format_markdown_to_html(text)}"
+        formatted_title = f"<b>{self._escape_html(title)}</b>"
+        formatted_text = self._format_markdown_to_html(text)
+        caption = f"{formatted_title}\n\n{formatted_text}"
         
-        # Check if caption is too long for Telegram (max 1024 characters including HTML tags)
-        send_separately = False
+        # Telegram photo caption limit is 1024 chars. Truncate text if too long.
         if len(caption) > 1024:
-            logger.warning(f"Caption is too long ({len(caption)} chars). Sending photo with title, and full text as a separate message.")
-            caption = f"<b>{self._escape_html(title)}</b>\n\n👇 Текст новости ниже:"
-            send_separately = True
+            logger.warning(f"Caption too long ({len(caption)} chars). Truncating to fit 1024 limit.")
+            # Reserve space for title + ellipsis
+            max_text_len = 1024 - len(formatted_title) - 10  # 10 for "\n\n" + "..."
+            if max_text_len > 50:
+                formatted_text = formatted_text[:max_text_len].rsplit('\n', 1)[0] + "..."
+            else:
+                formatted_text = formatted_text[:100] + "..."
+            caption = f"{formatted_title}\n\n{formatted_text}"
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
         
@@ -149,13 +155,7 @@ class TelegramPublisher:
                         resp = await client.post(url, data=data, files=files, timeout=30)
                         
                 if resp.status_code == 200:
-                    logger.info("Successfully published photo to Telegram")
-                    if send_separately:
-                        try:
-                            # Send full text separately
-                            await self.publish_text(title, text)
-                        except Exception as ex:
-                            logger.error(f"Failed to send follow-up text post separately: {ex}")
+                    logger.info("Successfully published photo post to Telegram")
                     return True
                 else:
                     logger.error(f"Failed to publish photo to Telegram. Status: {resp.status_code}, Body: {resp.text}")

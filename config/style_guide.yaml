@@ -8,7 +8,7 @@ tone:
   audience: "разработчики, геймеры, гики, энтузиасты ИИ"
 
 formatting:
-  max_length: 1000             # Max chars for Telegram post
+  max_length: 500              # Max chars for Telegram caption (strict, must fit under 1024 with title+hashtags)
   use_paragraphs: true
   bold_titles: true
   list_bullets: "🔥"

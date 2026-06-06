@@ -190,7 +190,15 @@ class ImageGenerator:
                 font = ImageFont.load_default()
  
             wrap_w = layout.get("wrap_width_vertical", 600) if vertical else layout.get("wrap_width_square", 900)
-            wrapped_lines = self._wrap_text(title, font, wrap_w)
+            
+            # Strip HTML tags from title before rendering on cover image
+            import re
+            clean_title = re.sub(r'<[^>]+>', '', title)
+            # Also limit cover text to first ~60 chars to keep it minimal and readable
+            if len(clean_title) > 60:
+                clean_title = clean_title[:57].rsplit(' ', 1)[0] + "..."
+            
+            wrapped_lines = self._wrap_text(clean_title, font, wrap_w)
             
             # Position text to avoid overlapping the bottom branding
             if vertical:

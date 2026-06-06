@@ -1,9 +1,9 @@
 name: SMM Automator Pipeline
 
 on:
-  schedule:
-    - cron: '0 * * * *'        # Run every hour
-  workflow_dispatch:            # Enable manual execution
+  # schedule:
+  #   - cron: '0 * * * *'        # Disabled — burns free-tier API quota
+  workflow_dispatch:            # Manual execution only
 
 jobs:
   run-pipeline:

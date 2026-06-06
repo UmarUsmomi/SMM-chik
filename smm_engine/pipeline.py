@@ -53,7 +53,7 @@ class SMMPipeline:
 
         new_items_processed = []
         scored_count = 0
-        max_scores_per_run = 10  # Hard limit to prevent rate limits and save API quota
+        max_scores_per_run = 5  # Hard limit to prevent rate limits and save API quota
 
         # 3. Filter and score items
         for item in scraped_items:
@@ -126,7 +126,7 @@ class SMMPipeline:
                 return summary
 
             adapted_count = 0
-            max_adaptations_per_run = 3
+            max_adaptations_per_run = 1  # Only adapt 1 post per run to stay within free quota
             published_any = False
  
             # Process candidates according to threshold
