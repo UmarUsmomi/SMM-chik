@@ -176,3 +176,24 @@ async def test_pollinations_ai_bg_generation():
             assert "bg_ai.jpg" in str(res_path)
             mock_client.get.assert_called_once()
             assert "image.pollinations.ai" in mock_client.get.call_args[0][0]
+
+# 7. Test Visual Prompt generation in TelegramPublisher
+@pytest.mark.asyncio
+async def test_telegram_publisher_visual_prompt():
+    from smm_engine.publishers.telegram_pub import TelegramPublisher
+    
+    pub = TelegramPublisher()
+    
+    # Mock Gemini helper function
+    mock_gemini_resp = "quantum computer, processor, laboratory"
+    
+    with patch("smm_engine.utils.gemini_helper.generate_content_with_retry", new_callable=AsyncMock) as mock_generate:
+        mock_generate.return_value = mock_gemini_resp
+        
+        # Patch config values
+        with patch("smm_engine.publishers.telegram_pub.TELEGRAM_BOT_TOKEN", "dummy_token"), \
+             patch("smm_engine.publishers.telegram_pub.TELEGRAM_CHANNEL_ID", "dummy_channel"):
+             
+             keywords = await pub._generate_visual_prompt("Title", "Body")
+             assert keywords == "quantum computer, processor, laboratory"
+             mock_generate.assert_called_once()

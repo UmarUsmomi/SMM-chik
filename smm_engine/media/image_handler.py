@@ -18,20 +18,26 @@ class ImageGenerator:
         self.theme = self._load_theme()
 
     def _setup_font(self) -> Path:
-        """Downloads a clean Roboto font if not present, otherwise uses default"""
-        font_file = self.temp_dir / "Roboto-Bold.ttf"
-        if not font_file.exists():
+        """Returns the path to the bundled Montserrat-Bold font"""
+        font_file = Path(__file__).resolve().parent.parent.parent / "fonts" / "Montserrat-Bold.ttf"
+        if font_file.exists():
+            logger.info(f"Using bundled Montserrat-Bold font: {font_file}")
+            return font_file
+            
+        # Fallback to download if it does not exist for some reason
+        temp_font = self.temp_dir / "Montserrat-Bold.ttf"
+        if not temp_font.exists():
             try:
-                logger.info("Downloading Roboto font for cover generation...")
-                url = "https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Bold.ttf"
+                logger.info("Downloading Montserrat-Bold font...")
+                url = "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-Bold.ttf"
                 resp = httpx.get(url, timeout=15)
                 if resp.status_code == 200:
-                    with open(font_file, "wb") as f:
+                    with open(temp_font, "wb") as f:
                         f.write(resp.content)
+                    return temp_font
             except Exception as e:
                 logger.error(f"Failed to download font: {e}")
-                return None
-        return font_file
+        return temp_font if temp_font.exists() else None
 
     def _load_theme(self) -> dict:
         """Loads branding theme configuration from themes directory"""
@@ -190,8 +196,16 @@ class ImageGenerator:
                 y_start = (800 - len(wrapped_lines) * (font_size + 18)) // 2
             
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
+            stroke_color = tuple(colors.get("brand_dark", [13, 15, 20, 255]))
             for line in wrapped_lines:
-                draw.text((pad_left, y_start), line, font=font, fill=text_color)
+                draw.text(
+                    (pad_left, y_start),
+                    line,
+                    font=font,
+                    fill=text_color,
+                    stroke_width=3,
+                    stroke_fill=stroke_color
+                )
                 y_start += font_size + 18
  
             # 4. Draw Channel Branding Overlay (only for square covers)
@@ -262,42 +276,76 @@ class ImageGenerator:
                     draw.line([(cx, cy - size), (cx, cy + size)], fill=(255, 255, 255, 255), width=width)
                 draw_cross(980, 1020)
                 draw_cross(1030, 980)
+
+            # 5. Draw Watermark Badge (for BOTH vertical and square covers)
+            font_size_wm = wm_config.get("font_size", 24)
+            if self.font_path and self.font_path.exists():
+                font_wm = ImageFont.truetype(str(self.font_path), font_size_wm)
+            else:
+                font_wm = ImageFont.load_default()
                 
-                # Watermark text
-                font_size_wm = wm_config.get("font_size", 24)
-                if self.font_path and self.font_path.exists():
-                    font_wm = ImageFont.truetype(str(self.font_path), font_size_wm)
+            text_parts = wm_config.get("text_parts", [])
+            
+            # Calculate widths of all parts
+            parts_measured = []
+            total_w = 0
+            for part in text_parts:
+                text_str = part.get("text", "")
+                color_type = part.get("color_type", "primary")
+                if color_type == "accent":
+                    color = tuple(colors.get("watermark_accent", [217, 4, 41, 255]))
                 else:
-                    font_wm = ImageFont.load_default()
-                    
-                text_parts = wm_config.get("text_parts", [])
+                    color = tuple(colors.get("watermark_text", [255, 255, 255, 255]))
                 
-                # Calculate widths of all parts
-                parts_measured = []
-                total_w = 0
-                for part in text_parts:
-                    text_str = part.get("text", "")
-                    color_type = part.get("color_type", "primary")
-                    if color_type == "accent":
-                        color = tuple(colors.get("watermark_accent", [217, 4, 41, 255]))
-                    else:
-                        color = tuple(colors.get("watermark_text", [255, 255, 255, 255]))
-                        
-                    try:
-                        w = font_wm.getlength(text_str)
-                    except AttributeError:
-                        w = len(text_str) * 12
-                        
-                    total_w += w
-                    parts_measured.append((text_str, color, w))
+                # Select font for this part (fallback to Arial/Segoe UI Emoji for symbols/emojis)
+                part_font = font_wm
+                if any(ord(c) > 127 and not (0x0400 <= ord(c) <= 0x04FF) for c in text_str):
+                    for font_name in ["seguiemj.ttf", "arial.ttf", "msyh.ttc", "DejaVuSans.ttf", "NotoColorEmoji.ttf"]:
+                        try:
+                            part_font = ImageFont.truetype(font_name, font_size_wm)
+                            break
+                        except Exception:
+                            continue
                     
-                start_x = (1080 - total_w) // 2
-                y_pos = 1025
+                try:
+                    w = part_font.getlength(text_str)
+                except AttributeError:
+                    w = len(text_str) * 12
+                    
+                total_w += w
+                parts_measured.append((text_str, color, w, part_font))
                 
-                current_x = start_x
-                for text_str, color, w in parts_measured:
-                    draw.text((current_x, y_pos), text_str, font=font_wm, fill=color)
-                    current_x += w
+            # Compute badge dimensions with padding
+            padding_x = 24
+            padding_y = 12
+            badge_width = total_w + 2 * padding_x
+            badge_height = font_size_wm + 2 * padding_y
+            
+            # Center the badge horizontally; position 60px from the bottom
+            badge_x1 = (width - badge_width) // 2
+            badge_y1 = height - badge_height - 60
+            badge_x2 = badge_x1 + badge_width
+            badge_y2 = badge_y1 + badge_height
+            
+            brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
+            brand_dark = tuple(colors.get("brand_dark", [13, 15, 20, 255]))
+            badge_bg = (brand_dark[0], brand_dark[1], brand_dark[2], 220) # 86% opaque dark background
+            
+            # Draw badge
+            draw.rounded_rectangle(
+                [badge_x1, badge_y1, badge_x2, badge_y2],
+                radius=12,
+                fill=badge_bg,
+                outline=brand_accent,
+                width=2
+            )
+            
+            # Draw watermark text inside the badge
+            current_x = badge_x1 + padding_x
+            y_pos = badge_y1 + padding_y - 2
+            for text_str, color, w, part_font in parts_measured:
+                draw.text((current_x, y_pos), text_str, font=part_font, fill=color)
+                current_x += w
  
             # Save as JPEG
             final_img = img.convert("RGB")

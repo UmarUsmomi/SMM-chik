@@ -76,6 +76,7 @@ Instructions:
 4. IMPORTANT: Maintain and preserve all HTML formatting tags such as <b>...</b>, <i>...</i>, and <blockquote expandable>...</blockquote> exactly as they are. Do NOT strip or corrupt these tags.
 5. If the text is already good and has no AI-isms, return it as is. Do NOT add new details.
 6. Return ONLY the final cleaned text, without any explanations or meta-comments.
+7. IMPORTANT: If the input text is a title/heading written in UPPERCASE, preserve the UPPERCASE formatting (do not convert it to lowercase or sentence case).
 """
 
         try:

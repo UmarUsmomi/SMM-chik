@@ -150,15 +150,51 @@ class TelegramPublisher:
             logger.error(f"Error publishing photo to Telegram: {e}")
             return False
 
+    async def _generate_visual_prompt(self, title: str, text: str) -> str:
+        """Generates a concise visual prompt (in English) for background image generation based on news content"""
+        prompt = f"""
+Analyze the following tech/gaming news post and generate a short, high-impact English visual search phrase/prompt (max 6 words, comma-separated) that describes a suitable background image for this news cover.
+The prompt must describe a realistic or stylized tech/gaming concept, NOT abstract concepts, and must NOT contain any words like "photo", "image", "vector", "drawing", "illustration", "high-res", or the name of the news item if it's too specific.
+Only return the comma-separated English keywords.
+
+News Title: {title}
+News Text: {text}
+
+Example Outputs:
+- quantum computer, laser, processor, laboratory
+- artificial intelligence, neural network, glowing brain
+- cyber soldier, sci-fi armor, neon city
+- futuristic console, controller, gaming gear
+
+Keywords:"""
+        try:
+            from smm_engine.utils.gemini_helper import generate_content_with_retry
+            from smm_engine.config import GEMINI_MODEL
+            
+            logger.info("Generating visual prompt using Gemini...")
+            res = await generate_content_with_retry(
+                prompt,
+                initial_model=GEMINI_MODEL,
+                generation_config={"temperature": 0.3}
+            )
+            cleaned = res.strip().replace("\n", "").replace('"', '').replace("'", "")
+            logger.info(f"Generated visual prompt: {cleaned}")
+            return cleaned
+        except Exception as e:
+            logger.error(f"Failed to generate visual prompt: {e}")
+            # Fallback to naive first 3 words of title
+            import re
+            words = re.findall(r'\w+', title)
+            return ",".join(words[:3]) if words else "technology,gaming"
+
     async def publish_post_with_cover(self, title: str, text: str) -> bool:
         """Generates a branded cover image and publishes it as a photo post, falling back to text on failure"""
         try:
             from smm_engine.media.image_handler import ImageGenerator
-            import re
             img_gen = ImageGenerator()
-            words = re.findall(r'\w+', title)
-            # Take first 3 words for search
-            keywords = ",".join(words[:3]) if words else "technology,gaming"
+            
+            # Generate visual prompt using Gemini instead of raw title words
+            keywords = await self._generate_visual_prompt(title, text)
             
             logger.info(f"Generating cover for post with keywords: {keywords}")
             # Try AI generation first
