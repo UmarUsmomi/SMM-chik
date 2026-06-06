@@ -152,6 +152,43 @@ class ImageGenerator:
             logger.error(f"Error downloading news background image: {e}")
         return None
 
+    def _generate_procedural_background(self, width: int, height: int, colors: dict) -> Image.Image:
+        """Generates a premium cyber tech style diagonal gradient background with a subtle grid overlay"""
+        brand_accent = colors.get("brand_accent", [217, 4, 41, 255])
+        bg_fallback = colors.get("background_fallback", [13, 15, 20, 255])
+        
+        # Calculate dynamic gradient end-color (15% accent + 85% background fallback)
+        grad_color1 = tuple(bg_fallback[:3] + [255])
+        grad_color2 = (
+            int(brand_accent[0] * 0.15 + bg_fallback[0] * 0.85),
+            int(brand_accent[1] * 0.15 + bg_fallback[1] * 0.85),
+            int(brand_accent[2] * 0.15 + bg_fallback[2] * 0.85),
+            255
+        )
+        
+        # Create a tiny 4x4 image and scale it up to create a smooth diagonal gradient
+        grad_small = Image.new("RGBA", (4, 4))
+        for x in range(4):
+            for y in range(4):
+                t = (x + y) / 6.0
+                r = int(grad_color1[0] * (1 - t) + grad_color2[0] * t)
+                g = int(grad_color1[1] * (1 - t) + grad_color2[1] * t)
+                b = int(grad_color1[2] * (1 - t) + grad_color2[2] * t)
+                grad_small.putpixel((x, y), (r, g, b, 255))
+                
+        img = grad_small.resize((width, height), Image.Resampling.BILINEAR)
+        draw = ImageDraw.Draw(img)
+        
+        # Draw tech grid overlay (low opacity accent color)
+        grid_color = (brand_accent[0], brand_accent[1], brand_accent[2], 12)
+        spacing = 60
+        for x in range(0, width, spacing):
+            draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+        for y in range(0, height, spacing):
+            draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+            
+        return img
+
     def create_cover(self, title: str, bg_path: Path = None, vertical: bool = False) -> Path:
         """Creates a text-overlay cover image with the channel's unified branding style"""
         width, height = (720, 1280) if vertical else (1080, 1080)
@@ -164,168 +201,120 @@ class ImageGenerator:
             layout = self.theme.get("layout", {})
             wm_config = self.theme.get("watermark", {})
             
-            # 1. Load and crop background or create solid dark background if failed
+            # 1. Load and crop background or create procedural gradient background if failed
             if bg_path and bg_path.exists():
-                bg_img = Image.open(bg_path).convert("RGBA")
-                w, h = bg_img.size
-                if vertical:
-                    # Center crop to 9:16 aspect ratio
-                    target_ratio = 720 / 1280
-                    current_ratio = w / h
-                    if current_ratio > target_ratio:
-                        new_w = int(h * target_ratio)
-                        left = (w - new_w) // 2
-                        bg_img = bg_img.crop((left, 0, left + new_w, h))
+                try:
+                    bg_img = Image.open(bg_path).convert("RGBA")
+                    w, h = bg_img.size
+                    if vertical:
+                        # Center crop to 9:16 aspect ratio
+                        target_ratio = 720 / 1280
+                        current_ratio = w / h
+                        if current_ratio > target_ratio:
+                            new_w = int(h * target_ratio)
+                            left = (w - new_w) // 2
+                            bg_img = bg_img.crop((left, 0, left + new_w, h))
+                        else:
+                            new_h = int(w / target_ratio)
+                            top = (h - new_h) // 2
+                            bg_img = bg_img.crop((0, top, w, top + new_h))
+                        img = bg_img.resize((720, 1280), Image.Resampling.LANCZOS)
                     else:
-                        new_h = int(w / target_ratio)
-                        top = (h - new_h) // 2
-                        bg_img = bg_img.crop((0, top, w, top + new_h))
-                    img = bg_img.resize((720, 1280), Image.Resampling.LANCZOS)
-                else:
-                    # Center crop to 1:1 square
-                    min_dim = min(w, h)
-                    left = (w - min_dim) // 2
-                    top = (h - min_dim) // 2
-                    bg_img = bg_img.crop((left, top, left + min_dim, top + min_dim))
-                    img = bg_img.resize((1080, 1080), Image.Resampling.LANCZOS)
+                        # Center crop to 1:1 square
+                        min_dim = min(w, h)
+                        left = (w - min_dim) // 2
+                        top = (h - min_dim) // 2
+                        bg_img = bg_img.crop((left, top, left + min_dim, top + min_dim))
+                        img = bg_img.resize((1080, 1080), Image.Resampling.LANCZOS)
+                except Exception as e:
+                    logger.error(f"Failed to load background image {bg_path}: {e}. Generating fallback.")
+                    img = self._generate_procedural_background(width, height, colors)
             else:
-                bg_fallback = tuple(colors.get("background_fallback", [13, 15, 20, 255]))
-                img = Image.new("RGBA", (width, height), bg_fallback)
- 
-            # 2. Dim background to make text readable (dark semi-transparent overlay)
-            overlay_color = tuple(colors.get("overlay_dim", [13, 15, 20, 150]))
-            overlay = Image.new("RGBA", img.size, overlay_color)
+                img = self._generate_procedural_background(width, height, colors)
+
+            # 2. Apply vertical linear gradient overlay (makes background photo visible on top, dark at bottom)
+            gradient_img = Image.new("RGBA", (1, 10))
+            dark_color = colors.get("brand_dark", [13, 15, 20, 255])
+            for y in range(10):
+                t = y / 9.0
+                alpha = int(40 + (242 - 40) * t)
+                gradient_img.putpixel((0, y), (dark_color[0], dark_color[1], dark_color[2], alpha))
+                
+            overlay = gradient_img.resize(img.size, Image.Resampling.BILINEAR)
             img = Image.alpha_composite(img, overlay)
             draw = ImageDraw.Draw(img)
  
-            # 3. Text preparation & wrapping
-            text_color = tuple(colors.get("text_primary", [255, 255, 255, 255]))
-            font_size = layout.get("font_size_vertical", 42) if vertical else layout.get("font_size_square", 56)
+            # 3. Draw minimalist HUD decorative elements
+            brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
             
-            # Load Font
-            if self.font_path and self.font_path.exists():
-                font = ImageFont.truetype(str(self.font_path), font_size)
-            else:
-                font = ImageFont.load_default()
- 
-            wrap_w = layout.get("wrap_width_vertical", 600) if vertical else layout.get("wrap_width_square", 900)
+            # Subtle inner border (thin line, 1px, low opacity)
+            offset = 24
+            border_color = (255, 255, 255, 20)
+            draw.rectangle(
+                [offset, offset, width - offset, height - offset],
+                outline=border_color,
+                width=1
+            )
             
-            # Strip HTML tags from title before rendering on cover image
-            import re
-            clean_title = re.sub(r'<[^>]+>', '', title)
-            # Remove emojis and other non-BMP symbols (surrogates) and typical emoji ranges (anything >= 0x2000)
-            clean_title = "".join(c for c in clean_title if ord(c) < 0x2000)
-            # Strip any double spaces or leading/trailing whitespace
-            clean_title = re.sub(r'\s+', ' ', clean_title).strip()
-            # If the clean title starts with punctuation/spaces left from emojis, clean it
-            clean_title = re.sub(r'^[^\w\s\dа-яА-ЯёЁ]+', '', clean_title).strip()
-            # Also limit cover text to first ~60 chars to keep it minimal and readable
-            if len(clean_title) > 60:
-                clean_title = clean_title[:57].rsplit(' ', 1)[0] + "..."
-            
-            wrapped_lines = self._wrap_text(clean_title, font, wrap_w)
-            
-            # Position text to avoid overlapping the bottom branding
-            if vertical:
-                y_start = (height - len(wrapped_lines) * (font_size + 15)) // 2
-            else:
-                # Center text vertically within the top 800px
-                y_start = (800 - len(wrapped_lines) * (font_size + 18)) // 2
-            
-            pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
-            stroke_color = tuple(colors.get("brand_dark", [13, 15, 20, 255]))
-            for line in wrapped_lines:
-                draw.text(
-                    (pad_left, y_start),
-                    line,
-                    font=font,
-                    fill=text_color,
-                    stroke_width=3,
-                    stroke_fill=stroke_color
-                )
-                y_start += font_size + 18
- 
-            # 4. Draw Channel Branding Overlay (only for square covers)
-            if not vertical:
-                import random
-                
-                brand_dark = tuple(colors.get("brand_dark", [13, 15, 20, 255]))
-                brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
-                
-                # Bottom-left black jagged block
-                points_black = [(0, 800)]
-                steps = 15
-                for i in range(1, steps):
-                    t = i / steps
-                    x = int(500 * t)
-                    y = int(800 + (1080 - 800) * t)
-                    x += random.randint(-10, 10)
-                    y += random.randint(-10, 10)
-                    points_black.append((x, y))
-                points_black.extend([(500, 1080), (0, 1080)])
-                draw.polygon(points_black, fill=brand_dark)
-                
-                # Bottom-right red jagged block
-                points_red = [(1080, 750)]
-                for i in range(1, steps):
-                    t = i / steps
-                    x = int(1080 - (1080 - 700) * t)
-                    y = int(750 + (1080 - 750) * t)
-                    x += random.randint(-8, 8)
-                    y += random.randint(-8, 8)
-                    points_red.append((x, y))
-                points_red.extend([(700, 1080), (1080, 1080)])
-                draw.polygon(points_red, fill=brand_accent)
-                
-                # White paint splatter / halftone simulation along black block edge
-                splatter_dark = tuple(colors.get("splatter_dark", [255, 255, 255, 180]))
-                for _ in range(120):
-                    t = random.random()
-                    x = int(500 * t)
-                    y = int(800 + (1080 - 800) * t)
-                    cx = x + random.randint(-30, 30)
-                    cy = y + random.randint(-30, 30)
-                    r = random.randint(1, 4)
-                    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=splatter_dark)
-                    
-                # Red paint splatter / halftone simulation along red block edge
-                splatter_accent = tuple(colors.get("splatter_accent", [217, 4, 41, 180]))
-                for _ in range(120):
-                    t = random.random()
-                    x = int(1080 - (1080 - 700) * t)
-                    y = int(750 + (1080 - 750) * t)
-                    cx = x + random.randint(-25, 25)
-                    cy = y + random.randint(-25, 25)
-                    r = random.randint(1, 3)
-                    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=splatter_accent)
-                    
-                # Accent 3x3 dot grid on the black block
-                start_x, start_y = 40, 1020
-                for r in range(3):
-                    for c in range(3):
-                        cx = start_x + c * 15
-                        cy = start_y + r * 15
-                        draw.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=brand_accent)
-                        
-                # White crosses on the red block
-                def draw_cross(cx, cy, size=10, width=2):
-                    draw.line([(cx - size, cy), (cx + size, cy)], fill=(255, 255, 255, 255), width=width)
-                    draw.line([(cx, cy - size), (cx, cy + size)], fill=(255, 255, 255, 255), width=width)
-                draw_cross(980, 1020)
-                draw_cross(1030, 980)
+            # Corner L-brackets (crop marks) in accent color
+            bracket_len = 20
+            bracket_offset = 20
+            # Top-Left
+            draw.line([(bracket_offset, bracket_offset), (bracket_offset + bracket_len, bracket_offset)], fill=brand_accent, width=2)
+            draw.line([(bracket_offset, bracket_offset), (bracket_offset, bracket_offset + bracket_len)], fill=brand_accent, width=2)
+            # Top-Right
+            draw.line([(width - bracket_offset, bracket_offset), (width - bracket_offset - bracket_len, bracket_offset)], fill=brand_accent, width=2)
+            draw.line([(width - bracket_offset, bracket_offset), (width - bracket_offset, bracket_offset + bracket_len)], fill=brand_accent, width=2)
+            # Bottom-Left
+            draw.line([(bracket_offset, height - bracket_offset), (bracket_offset + bracket_len, height - bracket_offset)], fill=brand_accent, width=2)
+            draw.line([(bracket_offset, height - bracket_offset), (bracket_offset, height - bracket_offset - bracket_len)], fill=brand_accent, width=2)
+            # Bottom-Right
+            draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset - bracket_len, height - bracket_offset)], fill=brand_accent, width=2)
+            draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset, height - bracket_offset - bracket_len)], fill=brand_accent, width=2)
 
-            # 5. Draw Watermark Badge (for BOTH vertical and square covers)
-            font_size_wm = wm_config.get("font_size", 24)
+            # 4. Draw Watermarks / Logo Badges at the top
+            font_size_wm = wm_config.get("font_size", 20)
             if self.font_path and self.font_path.exists():
                 font_wm = ImageFont.truetype(str(self.font_path), font_size_wm)
             else:
                 font_wm = ImageFont.load_default()
                 
-            text_parts = wm_config.get("text_parts", [])
+            # Draw Top-Left Brand Logo Badge (">_ CODE: ZERO")
+            logo_prefix = ">_ "
+            logo_text = "CODE: ZERO"
             
-            # Calculate widths of all parts
+            try:
+                prefix_w = font_wm.getlength(logo_prefix)
+                text_w = font_wm.getlength(logo_text)
+            except AttributeError:
+                prefix_w = len(logo_prefix) * 10
+                text_w = len(logo_text) * 10
+                
+            logo_total_w = prefix_w + text_w
+            badge_padding_x = 16
+            badge_padding_y = 8
+            
+            logo_x1 = 40
+            logo_y1 = 40
+            logo_x2 = logo_x1 + logo_total_w + 2 * badge_padding_x
+            logo_y2 = logo_y1 + font_size_wm + 2 * badge_padding_y
+            
+            logo_bg = (dark_color[0], dark_color[1], dark_color[2], 200)
+            draw.rounded_rectangle(
+                [logo_x1, logo_y1, logo_x2, logo_y2],
+                radius=6,
+                fill=logo_bg,
+                outline=brand_accent,
+                width=1
+            )
+            
+            draw.text((logo_x1 + badge_padding_x, logo_y1 + badge_padding_y - 2), logo_prefix, font=font_wm, fill=brand_accent)
+            draw.text((logo_x1 + badge_padding_x + prefix_w, logo_y1 + badge_padding_y - 2), logo_text, font=font_wm, fill=(255, 255, 255, 255))
+            
+            # Draw Top-Right Theme Watermark Badge
+            text_parts = wm_config.get("text_parts", [])
             parts_measured = []
-            total_w = 0
+            total_wm_w = 0
             for part in text_parts:
                 text_str = part.get("text", "")
                 color_type = part.get("color_type", "primary")
@@ -334,7 +323,6 @@ class ImageGenerator:
                 else:
                     color = tuple(colors.get("watermark_text", [255, 255, 255, 255]))
                 
-                # Select font for this part (fallback to Arial/Segoe UI Emoji for symbols/emojis)
                 part_font = font_wm
                 if any(ord(c) > 127 and not (0x0400 <= ord(c) <= 0x04FF) for c in text_str):
                     for font_name in ["seguiemj.ttf", "arial.ttf", "msyh.ttc", "DejaVuSans.ttf", "NotoColorEmoji.ttf"]:
@@ -343,47 +331,79 @@ class ImageGenerator:
                             break
                         except Exception:
                             continue
-                    
+                            
                 try:
                     w = part_font.getlength(text_str)
                 except AttributeError:
-                    w = len(text_str) * 12
+                    w = len(text_str) * 10
                     
-                total_w += w
+                total_wm_w += w
                 parts_measured.append((text_str, color, w, part_font))
                 
-            # Compute badge dimensions with padding
-            padding_x = 24
-            padding_y = 12
-            badge_width = total_w + 2 * padding_x
-            badge_height = font_size_wm + 2 * padding_y
+            wm_x2 = width - 40
+            wm_x1 = wm_x2 - total_wm_w - 2 * badge_padding_x
+            wm_y1 = 40
+            wm_y2 = wm_y1 + font_size_wm + 2 * badge_padding_y
             
-            # Center the badge horizontally; position 60px from the bottom
-            badge_x1 = (width - badge_width) // 2
-            badge_y1 = height - badge_height - 60
-            badge_x2 = badge_x1 + badge_width
-            badge_y2 = badge_y1 + badge_height
-            
-            brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
-            brand_dark = tuple(colors.get("brand_dark", [13, 15, 20, 255]))
-            badge_bg = (brand_dark[0], brand_dark[1], brand_dark[2], 220) # 86% opaque dark background
-            
-            # Draw badge
             draw.rounded_rectangle(
-                [badge_x1, badge_y1, badge_x2, badge_y2],
-                radius=12,
-                fill=badge_bg,
-                outline=brand_accent,
-                width=2
+                [wm_x1, wm_y1, wm_x2, wm_y2],
+                radius=6,
+                fill=logo_bg,
+                outline=(255, 255, 255, 40),
+                width=1
             )
             
-            # Draw watermark text inside the badge
-            current_x = badge_x1 + padding_x
-            y_pos = badge_y1 + padding_y - 2
+            current_x = wm_x1 + badge_padding_x
             for text_str, color, w, part_font in parts_measured:
-                draw.text((current_x, y_pos), text_str, font=part_font, fill=color)
+                draw.text((current_x, wm_y1 + badge_padding_y - 2), text_str, font=part_font, fill=color)
                 current_x += w
+
+            # 5. Headline Text Rendering
+            text_color = tuple(colors.get("text_primary", [255, 255, 255, 255]))
+            font_size = layout.get("font_size_vertical", 42) if vertical else layout.get("font_size_square", 56)
+            
+            if self.font_path and self.font_path.exists():
+                font = ImageFont.truetype(str(self.font_path), font_size)
+            else:
+                font = ImageFont.load_default()
  
+            wrap_w = layout.get("wrap_width_vertical", 600) if vertical else layout.get("wrap_width_square", 900)
+            
+            import re
+            clean_title = re.sub(r'<[^>]+>', '', title)
+            clean_title = "".join(c for c in clean_title if ord(c) < 0x2000)
+            clean_title = re.sub(r'\s+', ' ', clean_title).strip()
+            clean_title = re.sub(r'^[^\w\s\dа-яА-ЯёЁ]+', '', clean_title).strip()
+            
+            if len(clean_title) > 60:
+                clean_title = clean_title[:57].rsplit(' ', 1)[0] + "..."
+            
+            wrapped_lines = self._wrap_text(clean_title, font, wrap_w)
+            
+            # Position text at the bottom, leaving top 60% of background photo clean
+            total_text_height = len(wrapped_lines) * (font_size + 15)
+            y_start = height - total_text_height - 100
+            
+            pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
+            shadow_color = (0, 0, 0, 180)
+            
+            for line in wrapped_lines:
+                # Draw elegant drop shadow
+                draw.text(
+                    (pad_left + 2, y_start + 2),
+                    line,
+                    font=font,
+                    fill=shadow_color
+                )
+                # Draw main text in white (no cheap stroke outline)
+                draw.text(
+                    (pad_left, y_start),
+                    line,
+                    font=font,
+                    fill=text_color
+                )
+                y_start += font_size + 15
+
             # Save as JPEG
             final_img = img.convert("RGB")
             final_img.save(output_path, "JPEG", quality=90)

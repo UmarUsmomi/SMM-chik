@@ -65,7 +65,11 @@ class SteamNewsScraper(BaseScraper):
         if not title or not gid or not url:
             return None
             
-        contents = self._clean_contents(news.get("contents", ""))
+        contents_raw = news.get("contents", "")
+        img_match = re.search(r'\[img\](.*?)\[/img\]', contents_raw)
+        cover_image = img_match.group(1) if img_match else None
+        
+        contents = self._clean_contents(contents_raw)
         
         raw_data = {
             "game_name": game_name,
@@ -74,6 +78,7 @@ class SteamNewsScraper(BaseScraper):
             "feedlabel": news.get("feedlabel", ""),
             "contents": contents[:500],  # only keep preview for memory/token efficiency
             "date": news.get("date"),
+            "cover_image": cover_image,
         }
         
         return NewsItem(

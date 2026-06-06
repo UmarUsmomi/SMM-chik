@@ -48,10 +48,29 @@ class GamersNexusScraper(BaseScraper):
         summary = getattr(entry, "summary", "")
         published = getattr(entry, "published", "")
         
+        # Extract cover image from media elements or summary HTML
+        import re
+        cover_image = None
+        if hasattr(entry, "media_content") and entry.media_content:
+            cover_image = entry.media_content[0].get("url")
+        elif hasattr(entry, "media_thumbnail") and entry.media_thumbnail:
+            cover_image = entry.media_thumbnail[0].get("url")
+        elif hasattr(entry, "links"):
+            for link_item in entry.links:
+                if link_item.get("rel") == "enclosure" and "image" in link_item.get("type", ""):
+                    cover_image = link_item.get("href")
+                    break
+        
+        if not cover_image and summary:
+            img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', summary)
+            if img_match:
+                cover_image = img_match.group(1)
+        
         raw_data = {
             "summary": summary[:500], # Keep a snippet
             "published": published,
-            "author": getattr(entry, "author", "GamersNexus Team")
+            "author": getattr(entry, "author", "GamersNexus Team"),
+            "cover_image": cover_image
         }
         
         return NewsItem(

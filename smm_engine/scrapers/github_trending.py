@@ -70,6 +70,7 @@ class GitHubTrendingScraper(BaseScraper):
             "language": repo.get("language", "N/A"),
             "topic": topic,
             "topics": repo.get("topics", []),
+            "cover_image": repo.get("owner", {}).get("avatar_url"),
         }
         
         return NewsItem(
