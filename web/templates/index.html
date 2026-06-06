@@ -383,6 +383,7 @@
         </div>
         <div>
             <button class="btn btn-force" onclick="triggerPipeline()">🚀 Запустить парсер сейчас</button>
+            <button class="btn btn-reject" style="margin-left: 10px;" onclick="clearDatabase()">🧹 Очистить базу дубликатов</button>
         </div>
     </section>
 
@@ -563,6 +564,26 @@
         } catch (err) {
             console.error(err);
             showToast("Ошибка соединения при запуске парсера", "error");
+        }
+    }
+
+    // Clear Database (Duplicates cache)
+    async function clearDatabase() {
+        if (!confirm("Вы уверены, что хотите очистить всю базу данных новостей и сбросить кеш дубликатов? Это позволит заново спарсить и обработать все последние новости.")) {
+            return;
+        }
+        showToast("Очистка базы данных...", "info");
+        try {
+            const resp = await fetch('/api/clear-db', { method: 'POST' });
+            if (resp.ok) {
+                showToast("База данных успешно очищена!", "success");
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                showToast("Ошибка при очистке базы данных", "error");
+            }
+        } catch (err) {
+            console.error(err);
+            showToast("Ошибка соединения при очистке базы данных", "error");
         }
     }
 

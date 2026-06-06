@@ -148,7 +148,8 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     "/queue — Очередь постов на модерацию\n"
                     "/pause — Приостановить автопубликацию (все посты в очередь)\n"
                     "/resume — Включить автопубликацию (85+ сразу в канал)\n"
-                    "/force — Запустить парсинг и публикацию вручную"
+                    "/force — Запустить парсинг и публикацию вручную\n"
+                    "/reset — Очистить базу данных дубликатов для тестирования"
                 )
                 await send_bot_message(chat_id, welcome)
                 
@@ -211,6 +212,10 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
             elif text == "/force":
                 await send_bot_message(chat_id, "<b>Запускаю SMM pipeline в фоновом режиме... 🚀</b>")
                 background_tasks.add_task(run_pipeline_task)
+                
+            elif text == "/clear" or text == "/reset":
+                db.clear_all_news()
+                await send_bot_message(chat_id, "<b>🧹 База данных новостей очищена!</b> Теперь вы можете запустить <code>/force</code> для повторного парсинга и тестирования.")
                 
         # 2. Handle callback queries from buttons
         elif "callback_query" in update:
@@ -451,6 +456,12 @@ async def api_force_pipeline(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=409, detail="Парсинг уже запущен. Пожалуйста, подождите завершения текущего процесса.")
     background_tasks.add_task(run_pipeline_task)
     return {"status": "ok", "message": "Pipeline started"}
+
+@app.post("/api/clear-db")
+async def api_clear_db():
+    """API endpoint to clear database for testing duplicate re-scraping"""
+    db.clear_all_news()
+    return {"status": "ok", "message": "Database cleared"}
 
 @app.get("/api/test-models")
 async def test_models():

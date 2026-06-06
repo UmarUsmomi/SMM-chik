@@ -197,3 +197,54 @@ async def test_telegram_publisher_visual_prompt():
              keywords = await pub._generate_visual_prompt("Title", "Body")
              assert keywords == "quantum computer, processor, laboratory"
              mock_generate.assert_called_once()
+
+# 8. Test Database clearing and bot reset command
+def test_database_clear_and_reset_command(tmp_path):
+    from smm_engine.storage.database import DatabaseManager
+    from bot.app import app
+    from fastapi.testclient import TestClient
+    
+    db_file = tmp_path / "test_clear.db"
+    with patch("smm_engine.storage.database.SQLITE_DB_PATH", str(db_file)):
+        # Initialize db and add an item
+        db_mgr = DatabaseManager()
+        item_id = db_mgr.save_news_item("test_src", "id_1", "Title 1", "https://url.com/1", {})
+        
+        # Verify item exists
+        assert len(db_mgr.get_recent_items()) == 1
+        
+        # Clear database and verify empty
+        db_mgr.clear_all_news()
+        assert len(db_mgr.get_recent_items()) == 0
+        
+        # Re-save item and test API endpoint
+        db_mgr.save_news_item("test_src", "id_1", "Title 1", "https://url.com/1", {})
+        assert len(db_mgr.get_recent_items()) == 1
+        
+        # Test endpoint with FastAPI TestClient
+        with patch("bot.app.db", db_mgr):
+            client = TestClient(app)
+            resp = client.post("/api/clear-db")
+            assert resp.status_code == 200
+            assert resp.json() == {"status": "ok", "message": "Database cleared"}
+            assert len(db_mgr.get_recent_items()) == 0
+            
+            # Test Telegram Bot webhook reset command
+            db_mgr.save_news_item("test_src", "id_1", "Title 1", "https://url.com/1", {})
+            assert len(db_mgr.get_recent_items()) == 1
+            
+            # Mock sending message
+            with patch("bot.app.send_bot_message", new_callable=AsyncMock) as mock_send:
+                payload = {
+                    "update_id": 2000,
+                    "message": {
+                        "message_id": 10,
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "/reset"
+                    }
+                }
+                resp = client.post("/webhook", json=payload)
+                assert resp.status_code == 200
+                mock_send.assert_called_once()
+                assert "База данных новостей очищена" in mock_send.call_args[0][1]
+                assert len(db_mgr.get_recent_items()) == 0

@@ -192,6 +192,15 @@ class DatabaseManager:
         cursor.close()
         conn.close()
 
+    def clear_all_news(self):
+        """Clears all news items from database to allow testing duplicate re-scraping"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM news_items;")
+        conn.commit()
+        cursor.close()
+        conn.close()
+
     def is_duplicate(self, source: str, source_id: str, url: str = None) -> bool:
         """Checks if a story has already been parsed before"""
         conn = self._get_connection()
@@ -336,9 +345,12 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         param_placeholder = "%s" if self.use_postgres else "?"
+        # For rejected items, show latest first. For pending_review/parsed, show highest scored first.
+        order_by = "created_at DESC" if status == "rejected" else "score DESC, created_at DESC"
+        
         cursor.execute(
             f"SELECT id, source, source_id, title, url, score, score_reason, status, adapted_title, adapted_text, media_url, media_type, created_at "
-            f"FROM news_items WHERE status = {param_placeholder} ORDER BY score DESC, created_at DESC LIMIT {limit}",
+            f"FROM news_items WHERE status = {param_placeholder} ORDER BY {order_by} LIMIT {limit}",
             (status,)
         )
         
