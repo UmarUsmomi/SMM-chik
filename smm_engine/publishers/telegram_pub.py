@@ -1,7 +1,7 @@
 import httpx
 import logging
 import html
-from typing import Optional
+from typing import Optional, Any
 
 from smm_engine.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 
@@ -201,21 +201,77 @@ Keywords:"""
             words = re.findall(r'\w+', title)
             return ",".join(words[:3]) if words else "technology,gaming"
 
-    async def publish_post_with_cover(self, title: str, text: str) -> bool:
-        """Generates a branded cover image and publishes it as a photo post, falling back to text on failure"""
+    async def _extract_og_image(self, url: str) -> Optional[str]:
+        """Fetches the news article URL and extracts the og:image or twitter:image metadata"""
+        if not url or not (url.startswith("http://") or url.startswith("https://")):
+            return None
+        try:
+            logger.info(f"Extracting og:image from news URL: {url}")
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=headers, timeout=8, follow_redirects=True)
+                if resp.status_code == 200:
+                    html_content = resp.text
+                    import re
+                    match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+                    if not match:
+                        match = re.search(r'<meta\s+content=["\']([^"\']+)["\']\s+property=["\']og:image["\']', html_content, re.IGNORECASE)
+                    if not match:
+                        match = re.search(r'<meta\s+(?:name|property)=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+                    if match:
+                        img_url = match.group(1)
+                        if img_url.startswith("//"):
+                            img_url = "https:" + img_url
+                        elif img_url.startswith("/"):
+                            from urllib.parse import urljoin
+                            img_url = urljoin(url, img_url)
+                        logger.info(f"Extracted image URL: {img_url}")
+                        return img_url
+        except Exception as e:
+            logger.warning(f"Failed to parse og:image from page {url}: {e}")
+        return None
+
+    async def publish_post_with_cover(self, title: str, text: str, news_item_url: Optional[str] = None, raw_data: Optional[Any] = None) -> bool:
+        """Generates a branded cover image (using the news article's actual image if available) and publishes it"""
         try:
             from smm_engine.media.image_handler import ImageGenerator
             img_gen = ImageGenerator()
             
-            # Generate visual prompt using Gemini instead of raw title words
-            keywords = await self._generate_visual_prompt(title, text)
+            bg_path = None
+            image_url = None
             
-            logger.info(f"Generating cover for post with keywords: {keywords}")
-            # Try AI generation first
-            bg_path = await img_gen.generate_ai_background(keywords)
+            # 1. Try to extract image URL from raw_data
+            if raw_data:
+                # If raw_data is passed as JSON string, parse it
+                if isinstance(raw_data, str):
+                    try:
+                        import json
+                        raw_data = json.loads(raw_data)
+                    except Exception:
+                        pass
+                if isinstance(raw_data, dict):
+                    image_url = raw_data.get("cover_image") or raw_data.get("social_image")
+            
+            # 2. If not found in raw_data, try to extract og:image from the article URL
+            if not image_url and news_item_url:
+                image_url = await self._extract_og_image(news_item_url)
+                
+            # 3. Try downloading the extracted news image
+            if image_url:
+                bg_path = await img_gen.download_image(image_url)
+                
+            # 4. Fallback to AI generation or stock download if no news image was found/downloaded
             if not bg_path:
-                logger.info("AI background generation failed or skipped. Falling back to stock image...")
-                bg_path = await img_gen.fetch_background(keywords)
+                logger.info("No news image available or download failed. Falling back to AI generator...")
+                keywords = await self._generate_visual_prompt(title, text)
+                bg_path = await img_gen.generate_ai_background(keywords)
+                if not bg_path:
+                    logger.info("AI background generation failed. Falling back to stock image download...")
+                    bg_path = await img_gen.fetch_background(keywords)
+                    
+            # 5. Render final cover using the background
             cover_path = img_gen.create_cover(title, bg_path)
             
             if cover_path and cover_path.exists():
@@ -236,3 +292,5 @@ Keywords:"""
             logger.error(f"Failed to publish post with cover, falling back to text: {e}")
             
         return await self.publish_text(title, text)
+
+

@@ -4,6 +4,7 @@ import logging
 import yaml
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
+from typing import Optional, Any
 from smm_engine.config import BASE_DIR
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,24 @@ class ImageGenerator:
             logger.error(f"Error fetching background image: {e}")
         return None
 
+    async def download_image(self, url: str) -> Optional[Path]:
+        """Downloads a specific image URL to use as cover background"""
+        img_path = self.temp_dir / "bg_downloaded.jpg"
+        try:
+            logger.info(f"Downloading news image to use as background: {url}")
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=15, follow_redirects=True)
+                if resp.status_code == 200:
+                    with open(img_path, "wb") as f:
+                        f.write(resp.content)
+                    logger.info("Successfully downloaded news cover background.")
+                    return img_path
+                else:
+                    logger.warning(f"Failed to download news image. Status: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error downloading news background image: {e}")
+        return None
+
     def create_cover(self, title: str, bg_path: Path = None, vertical: bool = False) -> Path:
         """Creates a text-overlay cover image with the channel's unified branding style"""
         width, height = (720, 1280) if vertical else (1080, 1080)
@@ -194,6 +213,12 @@ class ImageGenerator:
             # Strip HTML tags from title before rendering on cover image
             import re
             clean_title = re.sub(r'<[^>]+>', '', title)
+            # Remove emojis and other non-BMP symbols (surrogates) and typical emoji ranges (anything >= 0x2000)
+            clean_title = "".join(c for c in clean_title if ord(c) < 0x2000)
+            # Strip any double spaces or leading/trailing whitespace
+            clean_title = re.sub(r'\s+', ' ', clean_title).strip()
+            # If the clean title starts with punctuation/spaces left from emojis, clean it
+            clean_title = re.sub(r'^[^\w\s\dа-яА-ЯёЁ]+', '', clean_title).strip()
             # Also limit cover text to first ~60 chars to keep it minimal and readable
             if len(clean_title) > 60:
                 clean_title = clean_title[:57].rsplit(' ', 1)[0] + "..."

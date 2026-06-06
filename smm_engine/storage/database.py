@@ -349,7 +349,7 @@ class DatabaseManager:
         order_by = "created_at DESC" if status == "rejected" else "score DESC, created_at DESC"
         
         cursor.execute(
-            f"SELECT id, source, source_id, title, url, score, score_reason, status, adapted_title, adapted_text, media_url, media_type, created_at "
+            f"SELECT id, source, source_id, title, url, score, score_reason, status, adapted_title, adapted_text, media_url, media_type, raw_data, created_at "
             f"FROM news_items WHERE status = {param_placeholder} ORDER BY {order_by} LIMIT {limit}",
             (status,)
         )
@@ -370,7 +370,7 @@ class DatabaseManager:
         
         param_placeholder = "%s" if self.use_postgres else "?"
         cursor.execute(
-            f"SELECT id, source, source_id, title, url, score, score_reason, status, adapted_title, adapted_text, media_url, media_type, created_at "
+            f"SELECT id, source, source_id, title, url, score, score_reason, status, adapted_title, adapted_text, media_url, media_type, raw_data, created_at "
             f"FROM news_items WHERE id = {param_placeholder}",
             (item_id,)
         )

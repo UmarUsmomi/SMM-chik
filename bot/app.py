@@ -235,8 +235,12 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     
                 await answer_callback_query(cb_id, "Публикую...")
                 
-                # Publish
-                success = await publisher.publish_post_with_cover(item["adapted_title"], item["adapted_text"])
+                success = await publisher.publish_post_with_cover(
+                    item["adapted_title"],
+                    item["adapted_text"],
+                    news_item_url=item.get("url"),
+                    raw_data=item.get("raw_data")
+                )
                 if success:
                     # Also publish to Threads
                     from smm_engine.publishers.threads_pub import ThreadsPublisher
@@ -431,7 +435,12 @@ async def api_moderate_item(item_id: int, req: ModerateReq):
                 title = item["title"]
                 text = f"<b>{item['title']}</b>"
                 
-        success = await publisher.publish_post_with_cover(title, text)
+        success = await publisher.publish_post_with_cover(
+            title, 
+            text,
+            news_item_url=item.get("url"),
+            raw_data=item.get("raw_data")
+        )
         if success:
             # Also publish to Threads
             from smm_engine.publishers.threads_pub import ThreadsPublisher

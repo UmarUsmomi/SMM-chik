@@ -134,13 +134,23 @@ class SMMPipeline:
                 score = candidate.get("score", 0)
                 item_id = candidate.get("id")
                 
+                # Deserialize raw_data from JSON
+                raw_data_str = candidate.get("raw_data")
+                raw_data = {}
+                if raw_data_str:
+                    try:
+                        import json
+                        raw_data = json.loads(raw_data_str)
+                    except Exception:
+                        pass
+
                 # Reconstruct NewsItem for the adapter
                 news_item = NewsItem(
                     source=candidate.get("source"),
                     source_id=candidate.get("source_id"),
                     title=candidate.get("title"),
                     url=candidate.get("url"),
-                    raw_data={} # raw_data not needed for adaptation, title/url/source is enough
+                    raw_data=raw_data
                 )
                 
                 is_paused = self.db.get_setting("is_paused", "false") == "true"
@@ -151,7 +161,12 @@ class SMMPipeline:
                     
                     adapted = await self.adapter.adapt_news(news_item)
                     if adapted:
-                        success = await self.publisher.publish_post_with_cover(adapted["title"], adapted["text"])
+                        success = await self.publisher.publish_post_with_cover(
+                            adapted["title"],
+                            adapted["text"],
+                            news_item_url=candidate.get("url"),
+                            raw_data=raw_data
+                        )
                         if success:
                             # Also publish to Threads
                             await self.threads_pub.publish_post(f"{adapted['title']}\n\n{adapted['text']}")

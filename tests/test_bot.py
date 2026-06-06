@@ -46,7 +46,7 @@ def test_api_moderate_approve(mock_pub):
     resp = client.post(f"/api/moderate/{item_id}", json={"action": "approve"})
     assert resp.status_code == 200
     assert resp.json()["action"] == "approved"
-    mock_pub.assert_called_once_with("Adapted Title", "Adapted Text")
+    mock_pub.assert_called_once_with("Adapted Title", "Adapted Text", news_item_url="https://api-test.com", raw_data="{}")
     
     # Verify in DB
     item = bot.app.db.get_by_id(item_id)
@@ -142,7 +142,7 @@ def test_bot_approve(mock_pub, mock_answer, mock_edit, mock_send):
     
     resp = client.post("/webhook", json=payload)
     assert resp.status_code == 200
-    mock_pub.assert_called_once_with("Adapted Title", "Adapted Text")
+    mock_pub.assert_called_once_with("Adapted Title", "Adapted Text", news_item_url="https://test.com", raw_data="{}")
     mock_edit.assert_called_once()
     assert "Опубликовано" in mock_edit.call_args[0][2]
     
