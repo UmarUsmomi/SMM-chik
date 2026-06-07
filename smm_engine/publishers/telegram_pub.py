@@ -32,7 +32,23 @@ class TelegramPublisher:
         import html
         
         # 1. Normalize by unescaping any pre-escaped HTML characters to get raw text
-        raw_text = html.unescape(text)
+        # Run unescape in a loop (up to 3 times) to handle double-escaped HTML entities
+        raw_text = text
+        for _ in range(3):
+            unescaped = html.unescape(raw_text)
+            if unescaped == raw_text:
+                break
+            raw_text = unescaped
+        
+        # Preprocess HTML lists and line breaks to be compatible with Telegram HTML parse mode
+        raw_text = re.sub(r'<br\s*/?>', '\n', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'<p[^>]*>', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'</p>\s*', '\n\n', raw_text, flags=re.IGNORECASE)
+        
+        raw_text = re.sub(r'<(ul|ol)[^>]*>', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'</(ul|ol)>\s*', '', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'<li>\s*', '▫️ ', raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r'</li>\s*', '\n', raw_text, flags=re.IGNORECASE)
         
         # 2. Convert raw double-asterisks to HTML bold tags
         raw_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', raw_text)
@@ -75,6 +91,65 @@ class TelegramPublisher:
                 # It's text between tags. Escape any HTML characters to protect Telegram HTML parser
                 result.append(html.escape(part))
                 
+        return "".join(result)
+
+    def _truncate_html(self, html_text: str, max_visible_len: int) -> str:
+        """Truncates HTML text to a maximum number of visible characters (excluding tags),
+        while preserving and closing valid HTML tags properly."""
+        import re
+        import html
+        
+        parts = re.split(r'(<[^>]+>)', html_text)
+        result = []
+        visible_len = 0
+        open_tags = []
+        
+        for i, part in enumerate(parts):
+            if i % 2 == 1:
+                # It's an HTML tag. Normalize it for comparison.
+                tag_clean = part.strip().lower()
+                # Track open/close tags
+                if tag_clean.startswith('</'):
+                    # Closing tag
+                    tag_name_match = re.match(r'</([a-zA-Z0-9-]+)', tag_clean)
+                    if tag_name_match:
+                        name = tag_name_match.group(1)
+                        # Find matching open tag in stack and remove it
+                        for idx in reversed(range(len(open_tags))):
+                            open_name_match = re.match(r'<([a-zA-Z0-9-]+)', open_tags[idx].lower().strip())
+                            if open_name_match and open_name_match.group(1) == name:
+                                open_tags.pop(idx)
+                                break
+                elif not tag_clean.endswith('/>') and not tag_clean.startswith('<br'):
+                    # Opening tag (excluding self-closing and br tags)
+                    open_tags.append(part)
+                result.append(part)
+            else:
+                # It's plain text. Count actual visible characters (unescaped)
+                unescaped = html.unescape(part)
+                if visible_len + len(unescaped) <= max_visible_len:
+                    result.append(part)
+                    visible_len += len(unescaped)
+                else:
+                    remaining = max_visible_len - visible_len
+                    slice_text = unescaped[:remaining]
+                    
+                    # Try to break at a space or newline if possible within a reasonable window
+                    if remaining > 15:
+                        last_space = max(slice_text.rfind(' '), slice_text.rfind('\n'))
+                        if last_space > remaining - 20:
+                            slice_text = slice_text[:last_space]
+                    
+                    result.append(html.escape(slice_text) + "...")
+                    visible_len += len(slice_text)
+                    
+                    # Close all remaining open tags in reverse order
+                    for tag in reversed(open_tags):
+                        tag_name_match = re.match(r'<([a-zA-Z0-9-]+)', tag.lower().strip())
+                        if tag_name_match:
+                            result.append(f"</{tag_name_match.group(1)}>")
+                    break
+                    
         return "".join(result)
 
     async def publish_text(self, title: str, text: str) -> bool:
@@ -120,14 +195,20 @@ class TelegramPublisher:
         caption = f"{formatted_title}\n\n{formatted_text}"
         
         # Telegram photo caption limit is 1024 chars. Truncate text if too long.
-        if len(caption) > 1024:
-            logger.warning(f"Caption too long ({len(caption)} chars). Truncating to fit 1024 limit.")
-            # Reserve space for title + ellipsis
-            max_text_len = 1024 - len(formatted_title) - 10  # 10 for "\n\n" + "..."
-            if max_text_len > 50:
-                formatted_text = formatted_text[:max_text_len].rsplit('\n', 1)[0] + "..."
-            else:
-                formatted_text = formatted_text[:100] + "..."
+        # We calculate the max visible characters for text to respect the limit safely.
+        # Leave a safety margin of 40 characters for title formatting, emojis and newlines.
+        title_len = len(title)
+        max_visible_text_len = 1024 - title_len - 40
+        if max_visible_text_len < 50:
+            max_visible_text_len = 100  # Fallback minimum
+            
+        import re
+        import html
+        visible_caption_len = len(html.unescape(re.sub(r'<[^>]+>', '', caption)))
+        
+        if visible_caption_len > 980 or len(caption) > 1024:
+            logger.warning(f"Caption too long (visible: {visible_caption_len}, raw: {len(caption)} chars). Truncating to fit 1024 limit.")
+            formatted_text = self._truncate_html(formatted_text, max_visible_text_len)
             caption = f"{formatted_title}\n\n{formatted_text}"
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"

@@ -37,7 +37,7 @@ class NewsScorer:
         prompt = self._build_prompt(item)
 
         try:
-            from smm_engine.utils.gemini_helper import generate_content_with_retry
+            from smm_engine.utils.gemini_helper import generate_content_with_retry, parse_json_robust
             
             # Request JSON output
             response_text = await generate_content_with_retry(
@@ -49,7 +49,7 @@ class NewsScorer:
                 }
             )
             
-            result = json.loads(response_text)
+            result = parse_json_robust(response_text)
             
             # Ensure all keys exist
             for key in ["relevance", "freshness", "virality", "uniqueness", "quality", "total"]:

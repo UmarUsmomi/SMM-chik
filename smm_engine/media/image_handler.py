@@ -87,32 +87,70 @@ class ImageGenerator:
         }
 
     async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
-        """Generates a relevant background image using Pollinations AI (free AI image generation)"""
+        """Generates a relevant background image using AI Horde (free, keyless alternative to Pollinations)"""
         import urllib.parse
         img_path = self.temp_dir / ("bg_ai_v.jpg" if vertical else "bg_ai.jpg")
-        width, height = (720, 1280) if vertical else (1080, 1080)
+        # Use 512x512/768 for faster generation in the queue
+        width, height = (512, 768) if vertical else (512, 512)
         
-        # Optimize prompt for Pollinations AI
         clean_keywords = keywords.replace(",", " ")
         prompt = f"futuristic cyber tech style vector art representation of {clean_keywords}, high resolution, neon colors, synthwave gaming aesthetic"
-        encoded_prompt = urllib.parse.quote(prompt)
         
-        # Remove private=true to avoid payment/quota errors on Pollinations AI
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
+        url = "https://aihorde.net/api/v2/generate/async"
+        headers = {
+            "apikey": "0000000000",
+            "Client-Agent": "SMM-Bot:1.0:production"
+        }
+        payload = {
+            "prompt": prompt,
+            "params": {
+                "n": 1,
+                "width": width,
+                "height": height,
+                "steps": 15,
+                "cfg_scale": 7.0
+            }
+        }
         
-        logger.info(f"Generating AI cover background using Pollinations: {prompt[:50]}...")
+        logger.info(f"Generating AI cover background using AI Horde: {prompt[:50]}...")
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=25)
-                if resp.status_code == 200:
-                    with open(img_path, "wb") as f:
-                        f.write(resp.content)
-                    logger.info("Successfully generated AI background cover.")
-                    return img_path
-                else:
-                    logger.warning(f"Failed to generate AI background. Status: {resp.status_code}")
+                resp = await client.post(url, json=payload, headers=headers, timeout=15)
+                if resp.status_code != 202:
+                    logger.warning(f"AI Horde submission failed: {resp.status_code} {resp.text}")
+                    return None
+                
+                job_id = resp.json().get("id")
+                if not job_id:
+                    return None
+                    
+                # Poll for result (max 5 checks, 2 seconds each = 10 seconds max)
+                import asyncio
+                for i in range(5):
+                    await asyncio.sleep(2)
+                    check_resp = await client.get(f"https://aihorde.net/api/v2/generate/check/{job_id}", timeout=10)
+                    if check_resp.status_code == 200:
+                        check_data = check_resp.json()
+                        if check_data.get("done"):
+                            status_resp = await client.get(f"https://aihorde.net/api/v2/generate/status/{job_id}", timeout=10)
+                            if status_resp.status_code == 200:
+                                status_data = status_resp.json()
+                                generations = status_data.get("generations", [])
+                                if generations:
+                                    img_url = generations[0].get("img")
+                                    # Download the generated webp/png image
+                                    img_resp = await client.get(img_url, timeout=15)
+                                    if img_resp.status_code == 200:
+                                        with open(img_path, "wb") as f:
+                                            f.write(img_resp.content)
+                                        logger.info("Successfully generated AI background cover via AI Horde.")
+                                        return img_path
+                    else:
+                        logger.warning(f"AI Horde check failed: {check_resp.status_code}")
+                        break
+                logger.warning("AI Horde generation timed out or failed to complete in 10 seconds.")
         except Exception as e:
-            logger.error(f"Error generating AI background image: {e}")
+            logger.error(f"Error generating AI background image via AI Horde: {e}")
         return None
  
     async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
@@ -120,9 +158,12 @@ class ImageGenerator:
         img_path = self.temp_dir / ("bg_download_v.jpg" if vertical else "bg_download.jpg")
         width, height = (720, 1280) if vertical else (1280, 720)
         
+        # Add 'technology,gaming' to the keywords list to ensure we always get a relevant tech/gaming fallback image rather than a cat
+        keywords_with_fallback = keywords + ",technology,gaming"
         # Clean and format keywords for LoremFlickr URL path (comma-separated, no spaces)
-        clean_keywords = ",".join([k.strip().replace(" ", ",") for k in keywords.split(",") if k.strip()])
-        url = f"https://loremflickr.com/{width}/{height}/{clean_keywords}"
+        clean_keywords = ",".join([k.strip().replace(" ", ",") for k in keywords_with_fallback.split(",") if k.strip()])
+        # Append /any at the end to perform an OR search on tags
+        url = f"https://loremflickr.com/{width}/{height}/{clean_keywords}/any"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, timeout=15, follow_redirects=True)

@@ -111,3 +111,25 @@ async def generate_content_with_retry(prompt: str, initial_model: str, generatio
                     
     # If all models failed
     raise RuntimeError(f"All Gemini models failed. Last error: {last_exception}")
+
+def parse_json_robust(text: str) -> dict:
+    """Robustly parses a JSON string, stripping markdown code block wrappers if present."""
+    import json
+    import re
+    if not text:
+        return {}
+    cleaned = text.strip()
+    
+    # Remove markdown code blocks if the model wrapped it (e.g. ```json ... ```)
+    match = re.search(r'```(?:json)?\s*(.*?)\s*```', cleaned, re.DOTALL | re.IGNORECASE)
+    if match:
+        cleaned = match.group(1).strip()
+    else:
+        # Check if there is any stray leading/trailing markdown characters or text
+        # Find first '{' and last '}'
+        start_idx = cleaned.find('{')
+        end_idx = cleaned.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            cleaned = cleaned[start_idx:end_idx+1]
+            
+    return json.loads(cleaned)

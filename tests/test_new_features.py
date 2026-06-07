@@ -153,29 +153,58 @@ def test_dynamic_theme_loading():
             colors = gen.theme.get("colors", {})
             assert colors.get("brand_accent") == [252, 238, 10, 255]
 
-# 6. Test Pollinations AI background image generation
+# 6. Test AI Horde background image generation (replacing Pollinations AI)
 @pytest.mark.asyncio
 async def test_pollinations_ai_bg_generation():
     from smm_engine.media.image_handler import ImageGenerator
     
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"fake_image_content"
+    # We will mock the client's post and get methods to return appropriate responses
+    mock_post_resp = MagicMock()
+    mock_post_resp.status_code = 202
+    mock_post_resp.json.return_value = {"id": "fake_job_id"}
+    
+    mock_check_resp = MagicMock()
+    mock_check_resp.status_code = 200
+    mock_check_resp.json.return_value = {"done": True}
+    
+    mock_status_resp = MagicMock()
+    mock_status_resp.status_code = 200
+    mock_status_resp.json.return_value = {"generations": [{"img": "https://fake_img_url.com/image.webp"}]}
+    
+    mock_img_resp = MagicMock()
+    mock_img_resp.status_code = 200
+    mock_img_resp.content = b"fake_image_content"
     
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
-    mock_client.get.return_value = mock_resp
+    
+    # Set up mock post
+    mock_client.post.return_value = mock_post_resp
+    
+    # Set up mock get to return different responses based on the URL queried
+    async def side_effect_get(url, *args, **kwargs):
+        if "check/fake_job_id" in url:
+            return mock_check_resp
+        elif "status/fake_job_id" in url:
+            return mock_status_resp
+        elif "image.webp" in url:
+            return mock_img_resp
+        return MagicMock(status_code=404)
+        
+    mock_client.get.side_effect = side_effect_get
     
     with patch("httpx.AsyncClient", return_value=mock_client):
         # Patch _setup_font to avoid any synchronous font downloads during tests
         with patch.object(ImageGenerator, "_setup_font", return_value=None):
-            gen = ImageGenerator()
-            res_path = await gen.generate_ai_background("test,keywords")
-            
-            assert res_path is not None
-            assert "bg_ai.jpg" in str(res_path)
-            mock_client.get.assert_called_once()
-            assert "image.pollinations.ai" in mock_client.get.call_args[0][0]
+            # Patch asyncio.sleep to not wait during tests
+            with patch("asyncio.sleep", return_value=None):
+                gen = ImageGenerator()
+                res_path = await gen.generate_ai_background("test,keywords")
+                
+                assert res_path is not None
+                assert "bg_ai.jpg" in str(res_path)
+                mock_client.post.assert_called_once()
+                assert mock_client.get.call_count >= 3
 
 # 7. Test Visual Prompt generation in TelegramPublisher
 @pytest.mark.asyncio
@@ -284,3 +313,99 @@ async def test_telegram_publisher_caption_split():
             assert "Short Title" in caption
             assert len(caption) <= 1024
             assert caption.endswith("...")
+
+# 10. Test HTML-aware truncation
+def test_telegram_publisher_html_aware_truncation():
+    from smm_engine.publishers.telegram_pub import TelegramPublisher
+    pub = TelegramPublisher()
+    
+    # Test simple truncation
+    res = pub._truncate_html("Hello world how are you", 10)
+    assert res == "Hello worl..."
+    
+    # Test simple truncation with word boundary
+    res_wb = pub._truncate_html("Hello world how are you", 16)
+    assert res_wb == "Hello world how..."
+    
+    # Test truncation with HTML tags
+    res = pub._truncate_html("Hello <b>world</b> how are you", 8)
+    assert res == "Hello <b>wo...</b>"
+    
+    # Test multiple nested tags
+    res = pub._truncate_html("<blockquote expandable>Hello <b>world</b>!</blockquote>", 9)
+    assert res == "<blockquote expandable>Hello <b>wor...</b></blockquote>"
+
+# 11. Test List Formatting in Telegram Publisher
+def test_telegram_publisher_list_formatting():
+    from smm_engine.publishers.telegram_pub import TelegramPublisher
+    pub = TelegramPublisher()
+    
+    # Test ul list tag replacement
+    text = "<ul><li>First item</li><li>Second item</li></ul>"
+    res = pub._format_markdown_to_html(text)
+    assert "▫️ First item" in res
+    assert "▫️ Second item" in res
+    assert "<ul>" not in res
+    assert "<li>" not in res
+    
+    # Test paragraph and br tag replacements
+    text2 = "<p>Paragraph 1</p><br/>Paragraph 2"
+    res2 = pub._format_markdown_to_html(text2)
+    assert "Paragraph 1" in res2
+    assert "Paragraph 2" in res2
+    assert "<p>" not in res2
+    assert "<br/>" not in res2
+
+# 12. Test Robust JSON Parsing
+def test_robust_json_parsing():
+    from smm_engine.utils.gemini_helper import parse_json_robust
+    
+    # Standard JSON
+    assert parse_json_robust('{"key": "value"}') == {"key": "value"}
+    
+    # Markdown-wrapped JSON
+    assert parse_json_robust('```json\n{"key": "value"}\n```') == {"key": "value"}
+    
+    # JSON with leading/trailing stray text
+    assert parse_json_robust('Here is the JSON: {"key": "value"} Hope you like it!') == {"key": "value"}
+
+# 13. Test Double HTML Unescaping
+def test_telegram_publisher_double_unescaping():
+    from smm_engine.publishers.telegram_pub import TelegramPublisher
+    pub = TelegramPublisher()
+    
+    # Test double-escaped HTML formatting
+    text = "&amp;lt;blockquote expandable&amp;gt;Double escaped text&amp;lt;/blockquote&amp;gt;"
+    res = pub._format_markdown_to_html(text)
+    assert "<blockquote expandable>" in res
+    assert "</blockquote>" in res
+    assert "&amp;" not in res
+
+# 14. Test LoremFlickr URL Format with /any OR Search
+@pytest.mark.anyio
+async def test_loremflickr_url_format():
+    from smm_engine.media.image_handler import ImageGenerator
+    import httpx
+    
+    img_gen = ImageGenerator()
+    original_get = httpx.AsyncClient.get
+    
+    requested_urls = []
+    async def mock_get(self, url, *args, **kwargs):
+        requested_urls.append(str(url))
+        mock_resp = httpx.Response(200, content=b"fake_image_data")
+        mock_resp.request = httpx.Request("GET", url)
+        return mock_resp
+        
+    httpx.AsyncClient.get = mock_get
+    try:
+        await img_gen.fetch_background("artificial intelligence, glowing brain")
+    finally:
+        httpx.AsyncClient.get = original_get
+        
+    assert len(requested_urls) > 0
+    url = requested_urls[0]
+    assert "/any" in url
+    assert "technology" in url
+    assert "gaming" in url
+    assert "artificial" in url

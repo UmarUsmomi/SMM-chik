@@ -104,7 +104,7 @@ class ContentAdapter:
 }}
 """
         try:
-            from smm_engine.utils.gemini_helper import generate_content_with_retry
+            from smm_engine.utils.gemini_helper import generate_content_with_retry, parse_json_robust
             response_text = await generate_content_with_retry(
                 prompt,
                 initial_model=self.model_name,
@@ -113,7 +113,7 @@ class ContentAdapter:
                     "temperature": 0.7
                 }
             )
-            return json.loads(response_text)
+            return parse_json_robust(response_text)
         except Exception as e:
             logger.error(f"Error in adaptation pass: {e}")
             return None

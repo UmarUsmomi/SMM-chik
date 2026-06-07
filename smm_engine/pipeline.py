@@ -180,6 +180,11 @@ class SMMPipeline:
                             self.db.save_adapted_content(item_id, adapted["title"], adapted["text"], status='pending_review')
                             summary["queued"] += 1
                             continue
+                    else:
+                        logger.warning(f"Adaptation failed for auto-publish candidate {item_id}. Moving to pending_review to prevent retry loop.")
+                        self.db.update_scoring(item_id, score, candidate.get("score_reason"), status='pending_review')
+                        summary["queued"] += 1
+                        continue
                 
                 # If we cannot auto-publish (paused, already published one, or score is 70-84)
                 # but score is high enough to be queued (>=70)
