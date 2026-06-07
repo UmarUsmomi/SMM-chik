@@ -260,14 +260,28 @@ class TelegramPublisher:
         # Telegram photo caption limit is 1024 chars. Truncate text if too long.
         # Leave a safety margin of 100 characters for title formatting, emojis, newlines and platform differences.
         max_caption_len = 1024 - 100
-        max_raw_text_len = max_caption_len - len(formatted_title) - 2 # 2 for newlines
+        
+        # Calculate UTF-16 length for the title (Telegram counts UTF-16 code units)
+        title_len_utf16 = len(formatted_title.encode('utf-16-le')) // 2
+        max_raw_text_len = max_caption_len - title_len_utf16 - 2 # 2 for newlines
         if max_raw_text_len < 50:
             max_raw_text_len = 100  # Fallback minimum
             
-        if len(caption) > max_caption_len:
-            logger.warning(f"Caption too long (raw: {len(caption)} chars). Truncating to fit {max_caption_len} limit.")
-            formatted_text = self._truncate_html(formatted_text, max_raw_text_len)
-            caption = f"{formatted_title}\n\n{formatted_text}"
+        # Calculate UTF-16 length for the whole caption
+        caption_len_utf16 = len(caption.encode('utf-16-le')) // 2
+        
+        if caption_len_utf16 > max_caption_len:
+            logger.warning(f"Caption too long (UTF-16: {caption_len_utf16} chars). Truncating to fit {max_caption_len} limit.")
+            
+            # Iteratively truncate until the UTF-16 length is within limits
+            # Start with max_raw_text_len and reduce if needed due to emojis in text
+            current_max = max_raw_text_len
+            while current_max > 50:
+                formatted_text = self._truncate_html(self._format_markdown_to_html(text), current_max)
+                caption = f"{formatted_title}\n\n{formatted_text}"
+                if len(caption.encode('utf-16-le')) // 2 <= max_caption_len:
+                    break
+                current_max -= 50
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
         
