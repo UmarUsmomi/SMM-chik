@@ -277,18 +277,8 @@ class ImageGenerator:
         return glitched
 
     def _draw_matrix_rain(self, draw: ImageDraw.ImageDraw, width: int, height: int, colors: dict, font):
-        """Draws procedural matrix code rain overlay"""
-        import random
-        brand_accent = colors.get("brand_accent", [217, 4, 41, 255])
-        chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*!<>/"
-        
-        for _ in range(150):
-            x = random.randint(0, width)
-            y = random.randint(0, height)
-            char = random.choice(chars)
-            # Vary opacity for depth
-            color = (brand_accent[0], brand_accent[1], brand_accent[2], random.randint(20, 100))
-            draw.text((x, y), char, font=font, fill=color)
+        """Matrix rain is disabled for a cleaner premium look."""
+        pass
 
     def _generate_procedural_background(self, width: int, height: int, colors: dict) -> Image.Image:
         """Generates a premium cyber tech style diagonal gradient background with a subtle grid overlay"""
@@ -370,23 +360,24 @@ class ImageGenerator:
             else:
                 img = self._generate_procedural_background(width, height, colors)
 
-            # 2. Apply Matrix Rain and vertical linear gradient overlay
-            gradient_img = Image.new("RGBA", (1, 10))
+            # Apply glitch to background BEFORE drawing text
+            img = self._apply_glitch_effect(img).convert("RGBA")
+
+            # 2. Apply dark gradient overlay to make text readable
+            gradient_img = Image.new("RGBA", (1, int(height * 0.7)))
             dark_color = colors.get("brand_dark", [13, 15, 20, 255])
-            for y in range(10):
-                t = y / 9.0
-                alpha = int(40 + (242 - 40) * t)
+            for y in range(gradient_img.height):
+                t = y / float(gradient_img.height)
+                # Exponential gradient for smoother fade
+                alpha = int(255 * (t ** 1.5))
                 gradient_img.putpixel((0, y), (dark_color[0], dark_color[1], dark_color[2], alpha))
                 
-            overlay = gradient_img.resize(img.size, Image.Resampling.BILINEAR)
-            img = Image.alpha_composite(img, overlay)
+            overlay = gradient_img.resize((width, height), Image.Resampling.BILINEAR)
+            # Paste gradient at the bottom
+            temp_overlay = Image.new("RGBA", img.size)
+            temp_overlay.paste(overlay, (0, int(height * 0.3)))
+            img = Image.alpha_composite(img, temp_overlay)
             draw = ImageDraw.Draw(img)
-            
-            # Apply Matrix Rain overlay
-            font_wm = ImageFont.load_default()
-            if self.font_path and self.font_path.exists():
-                font_wm = ImageFont.truetype(str(self.font_path), 20)
-            self._draw_matrix_rain(draw, width, height, colors, font_wm)
  
             # 3. Draw minimalist HUD decorative elements
             brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
@@ -434,50 +425,46 @@ class ImageGenerator:
             clean_title = re.sub(r'<[^>]+>', '', title)
             clean_title = "".join(c for c in clean_title if ord(c) < 0x2000)
             clean_title = re.sub(r'\s+', ' ', clean_title).strip()
-            clean_title = re.sub(r'^[^\w\s\dа-яА-ЯёЁ]+', '', clean_title).strip()
             
-            if len(clean_title) > 60:
-                clean_title = clean_title[:57].rsplit(' ', 1)[0] + "..."
+            # Remove anything that looks like body text accidentally appended to title
+            # If there's a strong separator or newline that was flattened, or if it's too long
+            if len(clean_title) > 65:
+                # Try to cut at punctuation
+                match = re.search(r'([.!?])\s+[А-ЯA-Z]', clean_title)
+                if match and match.start() < 65:
+                    clean_title = clean_title[:match.start() + 1]
+                else:
+                    clean_title = clean_title[:62].rsplit(' ', 1)[0] + "..."
             
             wrapped_lines = self._wrap_text(clean_title, font, wrap_w)
             
-            # Position text at the bottom, leaving top 60% of background photo clean
-            total_text_height = len(wrapped_lines) * (font_size + 15)
-            y_start = height - total_text_height - 100
+            # Position text at the bottom
+            total_text_height = len(wrapped_lines) * (font_size + 10)
+            y_start = height - total_text_height - 80
             
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
             shadow_color = (0, 0, 0, 200)
             glow_color = (brand_accent[0], brand_accent[1], brand_accent[2], 80) # Semi-transparent accent glow
             
             for line in wrapped_lines:
-                # Draw neon glow effect around the text
-                draw.text((pad_left - 3, y_start - 3), line, font=font, fill=glow_color)
-                draw.text((pad_left + 3, y_start + 3), line, font=font, fill=glow_color)
-                draw.text((pad_left - 3, y_start + 3), line, font=font, fill=glow_color)
-                draw.text((pad_left + 3, y_start - 3), line, font=font, fill=glow_color)
-                
-                # Draw elegant drop shadow
+                # Simple clean text with a soft shadow for readability (no messy glow)
                 draw.text(
-                    (pad_left + 2, y_start + 2),
+                    (pad_left + 3, y_start + 3),
                     line,
                     font=font,
                     fill=shadow_color
                 )
-                # Draw main text in white (no cheap stroke outline)
                 draw.text(
                     (pad_left, y_start),
                     line,
                     font=font,
                     fill=text_color
                 )
-                y_start += font_size + 15
-
-            # Apply final Glitch effect to the image before saving
-            glitched_img = self._apply_glitch_effect(img)
+                y_start += font_size + 10
             
             # Save as JPEG
-            final_img = glitched_img.convert("RGB")
-            final_img.save(output_path, "JPEG", quality=90)
+            final_img = img.convert("RGB")
+            final_img.save(output_path, "JPEG", quality=95)
             logger.info(f"Cover generated successfully at {output_path}")
             return output_path
             
