@@ -93,63 +93,126 @@ class TelegramPublisher:
                 
         return "".join(result)
 
-    def _truncate_html(self, html_text: str, max_visible_len: int) -> str:
-        """Truncates HTML text to a maximum number of visible characters (excluding tags),
-        while preserving and closing valid HTML tags properly."""
+    def _truncate_html(self, html_text: str, max_raw_len: int) -> str:
+        """Truncates HTML text to a maximum number of raw characters (including tags),
+        while preserving and closing valid HTML tags properly.
+        Ensures the final output length is strictly <= max_raw_len."""
         import re
-        import html
         
-        parts = re.split(r'(<[^>]+>)', html_text)
+        # If the whole text fits, just return it
+        if len(html_text) <= max_raw_len:
+            return html_text
+            
         result = []
-        visible_len = 0
+        current_len = 0
         open_tags = []
+        pos = 0
+        n = len(html_text)
         
-        for i, part in enumerate(parts):
-            if i % 2 == 1:
-                # It's an HTML tag. Normalize it for comparison.
-                tag_clean = part.strip().lower()
-                # Track open/close tags
-                if tag_clean.startswith('</'):
-                    # Closing tag
-                    tag_name_match = re.match(r'</([a-zA-Z0-9-]+)', tag_clean)
-                    if tag_name_match:
-                        name = tag_name_match.group(1)
-                        # Find matching open tag in stack and remove it
-                        for idx in reversed(range(len(open_tags))):
-                            open_name_match = re.match(r'<([a-zA-Z0-9-]+)', open_tags[idx].lower().strip())
-                            if open_name_match and open_name_match.group(1) == name:
-                                open_tags.pop(idx)
-                                break
-                elif not tag_clean.endswith('/>') and not tag_clean.startswith('<br'):
-                    # Opening tag (excluding self-closing and br tags)
-                    open_tags.append(part)
-                result.append(part)
-            else:
-                # It's plain text. Count actual visible characters (unescaped)
-                unescaped = html.unescape(part)
-                if visible_len + len(unescaped) <= max_visible_len:
-                    result.append(part)
-                    visible_len += len(unescaped)
+        while pos < n:
+            # Check if the entire remaining suffix fits
+            remaining_suffix = html_text[pos:]
+            if current_len + len(remaining_suffix) <= max_raw_len:
+                result.append(remaining_suffix)
+                current_len += len(remaining_suffix)
+                pos = n
+                break
+                
+            # Determine the next token
+            char = html_text[pos]
+            
+            if char == '<':
+                # It's a tag
+                match = re.match(r'<[^>]+>', remaining_suffix)
+                if match:
+                    tag = match.group(0)
+                    tag_len = len(tag)
+                    
+                    # Parse tag name and check if it is opening, closing, or self-closing
+                    tag_clean = tag.strip().lower()
+                    is_closing = tag_clean.startswith('</')
+                    is_self_closing = tag_clean.endswith('/>') or tag_clean.startswith('<br') or tag_clean.startswith('<hr')
+                    
+                    # Extract tag name
+                    if is_closing:
+                        name_match = re.match(r'</([a-zA-Z0-9-]+)', tag_clean)
+                        name = name_match.group(1) if name_match else ""
+                    else:
+                        name_match = re.match(r'<([a-zA-Z0-9-]+)', tag_clean)
+                        name = name_match.group(1) if name_match else ""
+                    
+                    # Update stack copy to calculate required closing tags
+                    temp_open_tags = list(open_tags)
+                    if is_closing:
+                        if temp_open_tags and temp_open_tags[-1] == name:
+                            temp_open_tags.pop()
+                    elif not is_self_closing and name:
+                        temp_open_tags.append(name)
+                        
+                    closing_tags_len = sum(len(t) + 3 for t in temp_open_tags)
+                    
+                    # Check if this tag fits (including closing tags and ellipsis)
+                    if current_len + tag_len + closing_tags_len + 3 <= max_raw_len:
+                        # It fits! Commit the change
+                        result.append(tag)
+                        current_len += tag_len
+                        open_tags = temp_open_tags
+                        pos += tag_len
+                    else:
+                        # Doesn't fit, truncate here
+                        break
                 else:
-                    remaining = max_visible_len - visible_len
-                    slice_text = unescaped[:remaining]
+                    # Malformed tag, treat '<' as normal char
+                    closing_tags_len = sum(len(t) + 3 for t in open_tags)
+                    if current_len + 1 + closing_tags_len + 3 <= max_raw_len:
+                        result.append('<')
+                        current_len += 1
+                        pos += 1
+                    else:
+                        break
+            elif char == '&':
+                # It's an HTML entity
+                match = re.match(r'&[a-zA-Z0-9#]+;', remaining_suffix)
+                if match:
+                    entity = match.group(0)
+                    entity_len = len(entity)
+                    closing_tags_len = sum(len(t) + 3 for t in open_tags)
                     
-                    # Try to break at a space or newline if possible within a reasonable window
-                    if remaining > 15:
-                        last_space = max(slice_text.rfind(' '), slice_text.rfind('\n'))
-                        if last_space > remaining - 20:
-                            slice_text = slice_text[:last_space]
-                    
-                    result.append(html.escape(slice_text) + "...")
-                    visible_len += len(slice_text)
-                    
-                    # Close all remaining open tags in reverse order
-                    for tag in reversed(open_tags):
-                        tag_name_match = re.match(r'<([a-zA-Z0-9-]+)', tag.lower().strip())
-                        if tag_name_match:
-                            result.append(f"</{tag_name_match.group(1)}>")
+                    if current_len + entity_len + closing_tags_len + 3 <= max_raw_len:
+                        result.append(entity)
+                        current_len += entity_len
+                        pos += entity_len
+                    else:
+                        break
+                else:
+                    # Treat as normal char
+                    closing_tags_len = sum(len(t) + 3 for t in open_tags)
+                    if current_len + 1 + closing_tags_len + 3 <= max_raw_len:
+                        result.append('&')
+                        current_len += 1
+                        pos += 1
+                    else:
+                        break
+            else:
+                # Normal char
+                closing_tags_len = sum(len(t) + 3 for t in open_tags)
+                if current_len + 1 + closing_tags_len + 3 <= max_raw_len:
+                    result.append(char)
+                    current_len += 1
+                    pos += 1
+                else:
                     break
                     
+        # If we broke before reaching the end, we need to append '...' and close open tags
+        if pos < n:
+            res_str = "".join(result)
+            if res_str.endswith(' '):
+                res_str = res_str[:-1]
+            res_str += "..."
+            for tag in reversed(open_tags):
+                res_str += f"</{tag}>"
+            return res_str
+            
         return "".join(result)
 
     async def publish_text(self, title: str, text: str) -> bool:
@@ -195,20 +258,15 @@ class TelegramPublisher:
         caption = f"{formatted_title}\n\n{formatted_text}"
         
         # Telegram photo caption limit is 1024 chars. Truncate text if too long.
-        # We calculate the max visible characters for text to respect the limit safely.
-        # Leave a safety margin of 40 characters for title formatting, emojis and newlines.
-        title_len = len(title)
-        max_visible_text_len = 1024 - title_len - 40
-        if max_visible_text_len < 50:
-            max_visible_text_len = 100  # Fallback minimum
+        # Leave a safety margin of 20 characters for title formatting, emojis and newlines.
+        max_caption_len = 1024 - 20
+        max_raw_text_len = max_caption_len - len(formatted_title) - 2 # 2 for newlines
+        if max_raw_text_len < 50:
+            max_raw_text_len = 100  # Fallback minimum
             
-        import re
-        import html
-        visible_caption_len = len(html.unescape(re.sub(r'<[^>]+>', '', caption)))
-        
-        if visible_caption_len > 980 or len(caption) > 1024:
-            logger.warning(f"Caption too long (visible: {visible_caption_len}, raw: {len(caption)} chars). Truncating to fit 1024 limit.")
-            formatted_text = self._truncate_html(formatted_text, max_visible_text_len)
+        if len(caption) > max_caption_len:
+            logger.warning(f"Caption too long (raw: {len(caption)} chars). Truncating to fit {max_caption_len} limit.")
+            formatted_text = self._truncate_html(formatted_text, max_raw_text_len)
             caption = f"{formatted_title}\n\n{formatted_text}"
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"

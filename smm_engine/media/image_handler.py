@@ -86,11 +86,24 @@ class ImageGenerator:
             }
         }
 
+    # Curated high-quality tech/gaming backgrounds to use when other image APIs fail
+    CURATED_BACKGROUNDS = [
+        "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1280&fit=crop&q=80",  # Gaming setup neon
+        "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1280&fit=crop&q=80",  # Gaming controller
+        "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1280&fit=crop&q=80",  # Microchip tech
+        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1280&fit=crop&q=80",  # Abstract cyber tech
+        "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=1280&fit=crop&q=80",  # Matrix coding
+        "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1280&fit=crop&q=80",  # Cybersecurity tech
+        "https://images.unsplash.com/photo-1563089145-599997674d42?w=1280&fit=crop&q=80",  # Abstract neon synthwave
+        "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=1280&fit=crop&q=80",  # Developer code
+        "https://images.unsplash.com/photo-1538481199705-c710c4e965fc?w=1280&fit=crop&q=80",  # Gaming room neon
+        "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=1280&fit=crop&q=80",  # Abstract dark tech
+    ]
+
     async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
         """Generates a relevant background image using AI Horde (free, keyless alternative to Pollinations)"""
         import urllib.parse
         img_path = self.temp_dir / ("bg_ai_v.jpg" if vertical else "bg_ai.jpg")
-        # Use 512x512/768 for faster generation in the queue
         width, height = (512, 768) if vertical else (512, 512)
         
         clean_keywords = keywords.replace(",", " ")
@@ -112,7 +125,7 @@ class ImageGenerator:
             }
         }
         
-        logger.info(f"Generating AI cover background using AI Horde: {prompt[:50]}...")
+        logger.info(f"Generating AI cover background using AI Horde: {prompt[:60]}...")
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, json=payload, headers=headers, timeout=15)
@@ -124,10 +137,10 @@ class ImageGenerator:
                 if not job_id:
                     return None
                     
-                # Poll for result (max 5 checks, 2 seconds each = 10 seconds max)
+                # Poll for result (max 15 checks, 3 seconds each = 45 seconds max)
                 import asyncio
-                for i in range(5):
-                    await asyncio.sleep(2)
+                for i in range(15):
+                    await asyncio.sleep(3)
                     check_resp = await client.get(f"https://aihorde.net/api/v2/generate/check/{job_id}", timeout=10)
                     if check_resp.status_code == 200:
                         check_data = check_resp.json()
@@ -138,7 +151,6 @@ class ImageGenerator:
                                 generations = status_data.get("generations", [])
                                 if generations:
                                     img_url = generations[0].get("img")
-                                    # Download the generated webp/png image
                                     img_resp = await client.get(img_url, timeout=15)
                                     if img_resp.status_code == 200:
                                         with open(img_path, "wb") as f:
@@ -148,31 +160,57 @@ class ImageGenerator:
                     else:
                         logger.warning(f"AI Horde check failed: {check_resp.status_code}")
                         break
-                logger.warning("AI Horde generation timed out or failed to complete in 10 seconds.")
+                logger.warning("AI Horde generation timed out or failed to complete in 45 seconds.")
         except Exception as e:
             logger.error(f"Error generating AI background image via AI Horde: {e}")
         return None
  
     async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
-        """Downloads a relevant background image from LoremFlickr"""
+        """Downloads a relevant background image from LoremFlickr or falls back to Unsplash curated list"""
         img_path = self.temp_dir / ("bg_download_v.jpg" if vertical else "bg_download.jpg")
         width, height = (720, 1280) if vertical else (1280, 720)
         
-        # Add 'technology,gaming' to the keywords list to ensure we always get a relevant tech/gaming fallback image rather than a cat
-        keywords_with_fallback = keywords + ",technology,gaming"
-        # Clean and format keywords for LoremFlickr URL path (comma-separated, no spaces)
-        clean_keywords = ",".join([k.strip().replace(" ", ",") for k in keywords_with_fallback.split(",") if k.strip()])
-        # Append /any at the end to perform an OR search on tags
-        url = f"https://loremflickr.com/{width}/{height}/{clean_keywords}/any"
+        # 1. Try to download from LoremFlickr using cache buster and topic tags
+        import random
+        random_lock = random.randint(1, 100000)
+        
+        # Use first 2 keywords for a more specific tag search on LoremFlickr
+        kw_list = [k.strip().replace(" ", "") for k in keywords.split(",") if k.strip()]
+        search_tags = kw_list[:2] if kw_list else ["technology", "gaming"]
+        clean_keywords = ",".join(search_tags)
+        
+        # We query with /all (AND) first, fallback to /any if unsuccessful
+        for search_mode in ["all", "any"]:
+            url = f"https://loremflickr.com/{width}/{height}/{clean_keywords}/{search_mode}?lock={random_lock}"
+            try:
+                logger.info(f"Attempting to download background from LoremFlickr ({search_mode}): {url}")
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(url, timeout=12, follow_redirects=True)
+                    if resp.status_code == 200:
+                        # Check if it returned a placeholder/cat image or an actual image
+                        # If size is small or if we got redirected to some cat picture, we still accept it as last resort,
+                        # but if it fails we fall back to curated.
+                        with open(img_path, "wb") as f:
+                            f.write(resp.content)
+                        logger.info("Successfully downloaded background from LoremFlickr.")
+                        return img_path
+            except Exception as e:
+                logger.warning(f"LoremFlickr download failed with mode {search_mode}: {e}")
+                
+        # 2. Final Fallback: Select a random high-quality curated background
+        fallback_url = random.choice(self.CURATED_BACKGROUNDS)
+        logger.info(f"Falling back to high-quality curated tech background: {fallback_url}")
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=15, follow_redirects=True)
+                resp = await client.get(fallback_url, timeout=15, follow_redirects=True)
                 if resp.status_code == 200:
                     with open(img_path, "wb") as f:
                         f.write(resp.content)
+                    logger.info("Successfully downloaded curated fallback background.")
                     return img_path
         except Exception as e:
-            logger.error(f"Error fetching background image: {e}")
+            logger.error(f"Failed to download curated background fallback: {e}")
+            
         return None
 
     async def download_image(self, url: str) -> Optional[Path]:

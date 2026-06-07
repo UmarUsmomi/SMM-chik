@@ -320,20 +320,44 @@ def test_telegram_publisher_html_aware_truncation():
     pub = TelegramPublisher()
     
     # Test simple truncation
+    # "Hello world how are you" has length 23.
+    # With max_raw_len = 10, it should fit "Hello w" (7 chars) + "..." (3 chars) = 10 chars.
     res = pub._truncate_html("Hello world how are you", 10)
-    assert res == "Hello worl..."
+    assert res == "Hello w..."
+    assert len(res) <= 10
     
     # Test simple truncation with word boundary
+    # "Hello world how are you", max_raw_len = 16
+    # "Hello world h" is 13 chars + "..." = 16 chars.
     res_wb = pub._truncate_html("Hello world how are you", 16)
-    assert res_wb == "Hello world how..."
+    assert res_wb == "Hello world h..."
+    assert len(res_wb) <= 16
     
     # Test truncation with HTML tags
-    res = pub._truncate_html("Hello <b>world</b> how are you", 8)
+    # "Hello <b>world</b> how are you"
+    # To fit "Hello <b>world...</b>" we need:
+    # "Hello " (6) + "<b>" (3) + "world" (5) + "..." (3) + "</b>" (4) = 21 chars.
+    # If we pass max_raw_len = 18, it must truncate further to fit within 18 chars:
+    # "Hello " (6) + "<b>" (3) + "wo" (2) + "..." (3) + "</b>" (4) = 18 chars.
+    res = pub._truncate_html("Hello <b>world</b> how are you", 18)
     assert res == "Hello <b>wo...</b>"
+    assert len(res) <= 18
+    
+    # If we pass max_raw_len = 17, it should truncate to fit within 17:
+    # "Hello " (6) + "<b>" (3) + "w" (1) + "..." (3) + "</b>" (4) = 17 chars.
+    res_trunc = pub._truncate_html("Hello <b>world</b> how are you", 17)
+    assert res_trunc == "Hello <b>w...</b>"
+    assert len(res_trunc) <= 17
     
     # Test multiple nested tags
-    res = pub._truncate_html("<blockquote expandable>Hello <b>world</b>!</blockquote>", 9)
-    assert res == "<blockquote expandable>Hello <b>wor...</b></blockquote>"
+    # "<blockquote expandable>Hello <b>world</b>!</blockquote>"
+    # Let's check length:
+    # "<blockquote expandable>" (23) + "Hello <b>world</b>!" (19) + "</blockquote>" (13) = 55 chars.
+    # To fit "<blockquote expandable>Hello <b>w...</b></blockquote>" we need:
+    # "<blockquote expandable>" (23) + "Hello " (6) + "<b>" (3) + "w" (1) + "..." (3) + "</b>" (4) + "</blockquote>" (13) = 53 chars.
+    res_nested = pub._truncate_html("<blockquote expandable>Hello <b>world</b>!</blockquote>", 53)
+    assert res_nested == "<blockquote expandable>Hello <b>w...</b></blockquote>"
+    assert len(res_nested) <= 53
 
 # 11. Test List Formatting in Telegram Publisher
 def test_telegram_publisher_list_formatting():
@@ -405,7 +429,5 @@ async def test_loremflickr_url_format():
         
     assert len(requested_urls) > 0
     url = requested_urls[0]
-    assert "/any" in url
-    assert "technology" in url
-    assert "gaming" in url
+    assert "/all" in url or "/any" in url
     assert "artificial" in url

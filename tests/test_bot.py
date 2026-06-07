@@ -45,7 +45,7 @@ def test_api_moderate_approve(mock_pub):
     
     resp = client.post(f"/api/moderate/{item_id}", json={"action": "approve"})
     assert resp.status_code == 200
-    assert resp.json()["action"] == "approved"
+    assert resp.json()["action"] == "publishing_started"
     mock_pub.assert_called_once_with("Adapted Title", "Adapted Text", news_item_url="https://api-test.com", raw_data="{}")
     
     # Verify in DB

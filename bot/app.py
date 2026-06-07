@@ -48,6 +48,97 @@ templates = Jinja2Templates(directory="web/templates")
 pipeline_running = False
 pipeline_lock = asyncio.Lock()
 
+# Deduplication state for publishing to prevent duplicate posting via webhook retries
+active_publishing_ids = set()
+publishing_lock = asyncio.Lock()
+
+async def publish_item_background(item_id: int, chat_id: int, message_id: int):
+    """Background task to publish post, preventing duplicate execution and webhook timeouts."""
+    async with publishing_lock:
+        if item_id in active_publishing_ids:
+            logger.info(f"Item {item_id} is already in the process of publishing. Skipping duplicate run.")
+            return
+        active_publishing_ids.add(item_id)
+        
+    try:
+        item = db.get_by_id(item_id)
+        if not item:
+            logger.error(f"Item {item_id} not found in database for background publishing.")
+            return
+            
+        if item["status"] == "published":
+            logger.info(f"Item {item_id} status is already 'published'. Skipping background publish.")
+            return
+
+        title = item["adapted_title"]
+        text = item["adapted_text"]
+        
+        # If it failed to adapt earlier (None or literal 'None' string), adapt on the fly
+        is_adapted_valid = (
+            title and text and 
+            title.strip().lower() != "none" and 
+            text.strip().lower() != "none"
+        )
+        
+        if not is_adapted_valid:
+            logger.info(f"Item {item_id} has invalid or missing adapted content. Adapting on the fly...")
+            from smm_engine.content.adapter import ContentAdapter
+            from smm_engine.scrapers.base import NewsItem
+            adapter = ContentAdapter()
+            news_item = NewsItem(
+                source=item["source"],
+                source_id=item["source_id"],
+                title=item["title"],
+                url=item["url"],
+                raw_data={}
+            )
+            try:
+                adapted = await adapter.adapt_news(news_item)
+                if adapted and adapted.get("title") and adapted.get("text"):
+                    title = adapted["title"]
+                    text = adapted["text"]
+                    if title.strip().lower() == "none" or text.strip().lower() == "none":
+                        raise Exception("Adapter returned literal 'None' string")
+                    db.save_adapted_content(item_id, title, text, status=item["status"])
+                else:
+                    raise Exception("Adapter returned empty content")
+            except Exception as ex:
+                logger.error(f"Failed to adapt item {item_id} on the fly: {ex}")
+                title = item["title"]
+                text = f"<b>{item['title']}</b>"
+
+        success = await publisher.publish_post_with_cover(
+            title, 
+            text,
+            news_item_url=item.get("url"),
+            raw_data=item.get("raw_data")
+        )
+        if success:
+            # Also publish to Threads
+            from smm_engine.publishers.threads_pub import ThreadsPublisher
+            threads_pub = ThreadsPublisher()
+            await threads_pub.publish_post(f"{title}\n\n{text}")
+            
+            db.mark_published(item_id)
+            
+            # If triggered from Telegram Bot, update the inline moderation message
+            if chat_id != 0 and message_id != 0:
+                await edit_message_text(
+                    chat_id, 
+                    message_id, 
+                    f"<b>✅ Опубликовано в канал:</b>\n{title}"
+                )
+        else:
+            if chat_id != 0:
+                await send_bot_message(chat_id, f"❌ Ошибка при отправке сообщения в канал (ID: {item_id}).")
+    except Exception as e:
+        logger.error(f"Error in background publish: {e}", exc_info=True)
+        if chat_id != 0:
+            await send_bot_message(chat_id, f"❌ Критическая ошибка при публикации (ID: {item_id}): {e}")
+    finally:
+        async with publishing_lock:
+            active_publishing_ids.discard(item_id)
+
 @app.on_event("startup")
 async def startup_event():
     """Auto-registers Telegram Webhook on startup using Render URL"""
@@ -233,28 +324,12 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     await answer_callback_query(cb_id, "Новость не найдена в базе!")
                     return {"status": "ok"}
                     
-                await answer_callback_query(cb_id, "Публикую...")
-                
-                success = await publisher.publish_post_with_cover(
-                    item["adapted_title"],
-                    item["adapted_text"],
-                    news_item_url=item.get("url"),
-                    raw_data=item.get("raw_data")
-                )
-                if success:
-                    # Also publish to Threads
-                    from smm_engine.publishers.threads_pub import ThreadsPublisher
-                    threads_pub = ThreadsPublisher()
-                    await threads_pub.publish_post(f"{item['adapted_title']}\n\n{item['adapted_text']}")
+                if item["status"] == "published":
+                    await answer_callback_query(cb_id, "Эта новость уже опубликована!")
+                    return {"status": "ok"}
                     
-                    db.mark_published(item_id)
-                    await edit_message_text(
-                        chat_id, 
-                        message_id, 
-                        f"<b>✅ Опубликовано в канал:</b>\n{item['adapted_title']}"
-                    )
-                else:
-                    await send_bot_message(chat_id, "❌ Ошибка при отправке сообщения в канал.")
+                await answer_callback_query(cb_id, "Публикую...")
+                background_tasks.add_task(publish_item_background, item_id, chat_id, message_id)
                     
             elif data.startswith("reject_"):
                 item_id = int(data.split("_")[1])
@@ -387,70 +462,18 @@ class ModerateReq(BaseModel):
     action: str
 
 @app.post("/api/moderate/{item_id}")
-async def api_moderate_item(item_id: int, req: ModerateReq):
+async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: BackgroundTasks):
     """API endpoint to approve/reject an item from dashboard"""
     item = db.get_by_id(item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
         
     if req.action == "approve":
-        title = item["adapted_title"]
-        text = item["adapted_text"]
-        
-        # If it failed to adapt earlier (None or literal 'None' string), let's adapt it on the fly now!
-        is_adapted_valid = (
-            title and text and 
-            title.strip().lower() != "none" and 
-            text.strip().lower() != "none"
-        )
-        
-        if not is_adapted_valid:
-            logger.info(f"Item {item_id} has invalid or missing adapted content. Adapting on the fly...")
-            from smm_engine.content.adapter import ContentAdapter
-            from smm_engine.scrapers.base import NewsItem
-            adapter = ContentAdapter()
-            news_item = NewsItem(
-                source=item["source"],
-                source_id=item["source_id"],
-                title=item["title"],
-                url=item["url"],
-                raw_data={}
-            )
-            try:
-                adapted = await adapter.adapt_news(news_item)
-                if adapted and adapted.get("title") and adapted.get("text"):
-                    title = adapted["title"]
-                    text = adapted["text"]
-                    
-                    if title.strip().lower() == "none" or text.strip().lower() == "none":
-                        raise Exception("Adapter returned literal 'None' string")
-                        
-                    # Save it so we don't have to re-adapt next time
-                    db.save_adapted_content(item_id, title, text, status=item["status"])
-                else:
-                    raise Exception("Adapter returned empty content")
-            except Exception as ex:
-                logger.error(f"Failed to adapt item {item_id} on the fly: {ex}")
-                # Fallback to original title and url
-                title = item["title"]
-                text = f"<b>{item['title']}</b>"
-                
-        success = await publisher.publish_post_with_cover(
-            title, 
-            text,
-            news_item_url=item.get("url"),
-            raw_data=item.get("raw_data")
-        )
-        if success:
-            # Also publish to Threads
-            from smm_engine.publishers.threads_pub import ThreadsPublisher
-            threads_pub = ThreadsPublisher()
-            await threads_pub.publish_post(f"{title}\n\n{text}")
+        if item["status"] == "published":
+            return {"status": "ok", "action": "already_published"}
             
-            db.mark_published(item_id)
-            return {"status": "ok", "action": "approved"}
-        else:
-            raise HTTPException(status_code=500, detail="Telegram publishing failed")
+        background_tasks.add_task(publish_item_background, item_id, 0, 0)
+        return {"status": "ok", "action": "publishing_started"}
     elif req.action == "reject":
         db.update_scoring(item_id, item["score"], item["score_reason"], status='rejected')
         return {"status": "ok", "action": "rejected"}
