@@ -258,8 +258,8 @@ class TelegramPublisher:
         caption = f"{formatted_title}\n\n{formatted_text}"
         
         # Telegram photo caption limit is 1024 chars. Truncate text if too long.
-        # Leave a safety margin of 20 characters for title formatting, emojis and newlines.
-        max_caption_len = 1024 - 20
+        # Leave a safety margin of 100 characters for title formatting, emojis, newlines and platform differences.
+        max_caption_len = 1024 - 100
         max_raw_text_len = max_caption_len - len(formatted_title) - 2 # 2 for newlines
         if max_raw_text_len < 50:
             max_raw_text_len = 100  # Fallback minimum
