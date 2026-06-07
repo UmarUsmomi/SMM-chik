@@ -81,16 +81,16 @@ class ContentAdapter:
 Тональность: {tone}
 
 ФОРМАТ ПОСТА (СТРОГО):
-1. Заголовок: Тематический эмодзи + UPPERCASE. Пример: "⚡ GEMMA 2: НОВАЯ ЭРА ИИ"
-2. Тело: 2-3 коротких предложения. Что случилось, почему это важно. Ключевые слова выдели <b>жирным</b>.
-3. Вопрос: Закончи одним вовлекающим вопросом.
+1. Заголовок: Тематический эмодзи + UPPERCASE. Пример: "🧠 ИИ: СОЗНАНИЕ ИЛИ ПРОСТО МАТЕМАТИКА?"
+2. Введение: Одно-два предложения, суть новости.
+3. Основные пункты: Краткий маркированный список из 2-3 пунктов. Для маркеров используй 🔸. Ключевые термины и суть пункта выделяй <b>жирным</b>.
+4. Заключительный вопрос: Закончи пост одним вовлекающим вопросом с эмодзи 💬.
 
 СТРОГИЕ ПРАВИЛА:
 {style_rules_str}
-- Длина body: СТРОГО до {max_length} символов! Пиши кратко и по делу.
-- НЕ используй <blockquote> и списки — пиши только прозу.
-- НЕ используй маркеры 🔥 для списков.
-- НЕ добавляй хэштеги — они добавятся автоматически.
+- Длина всего поста: СТРОГО до {max_length} символов! Пиши емко.
+- НЕ используй теги и хэштеги — они запрещены.
+- НЕ используй цитаты <blockquote>.
 
 Новость для адаптации:
 Заголовок: {item.title}
@@ -100,7 +100,7 @@ class ContentAdapter:
 Верни СТРОГО JSON:
 {{
   "title": "ЗАГОЛОВОК С ЭМОДЗИ В UPPERCASE",
-  "body": "Краткое тело поста (2-3 предложения + вопрос)"
+  "body": "Структурированный текст поста (введение, пункты 🔸, вопрос 💬)"
 }}
 """
         try:
@@ -119,21 +119,5 @@ class ContentAdapter:
             return None
 
     def _generate_hashtags(self, source: str, tags: list) -> str:
-        """Generates standard hashtags based on channel guidelines"""
-        # Get tags from style guide
-        hashtag_config = STYLE_GUIDE.get("hashtags", {})
-        
-        selected = set()
-        
-        # Add basic tags based on source/type
-        if source == "steam" or "gaming" in tags or "gamedev" in tags:
-            selected.update(hashtag_config.get("gaming", ["#гейминг", "#игры"]))
-        elif source == "github" or "devto" in source:
-            selected.update(hashtag_config.get("software", ["#разработка", "#программирование"]))
-        else:
-            # default AI tags
-            selected.update(hashtag_config.get("ai", ["#ии", "#нейросети"]))
-            
-        # Limit hashtags
-        max_hashtags = STYLE_GUIDE.get("formatting", {}).get("max_hashtags", 3)
-        return " ".join(list(selected)[:max_hashtags])
+        """Disabled: Hashtags are no longer used based on new design"""
+        return ""

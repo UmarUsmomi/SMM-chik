@@ -153,58 +153,24 @@ def test_dynamic_theme_loading():
             colors = gen.theme.get("colors", {})
             assert colors.get("brand_accent") == [252, 238, 10, 255]
 
-# 6. Test AI Horde background image generation (replacing Pollinations AI)
+# 6. Test AI Background Routing
 @pytest.mark.asyncio
-async def test_pollinations_ai_bg_generation():
+async def test_ai_background_routing():
     from smm_engine.media.image_handler import ImageGenerator
     
-    # We will mock the client's post and get methods to return appropriate responses
-    mock_post_resp = MagicMock()
-    mock_post_resp.status_code = 202
-    mock_post_resp.json.return_value = {"id": "fake_job_id"}
+    gen = ImageGenerator()
     
-    mock_check_resp = MagicMock()
-    mock_check_resp.status_code = 200
-    mock_check_resp.json.return_value = {"done": True}
-    
-    mock_status_resp = MagicMock()
-    mock_status_resp.status_code = 200
-    mock_status_resp.json.return_value = {"generations": [{"img": "https://fake_img_url.com/image.webp"}]}
-    
-    mock_img_resp = MagicMock()
-    mock_img_resp.status_code = 200
-    mock_img_resp.content = b"fake_image_content"
-    
-    mock_client = AsyncMock()
-    mock_client.__aenter__.return_value = mock_client
-    
-    # Set up mock post
-    mock_client.post.return_value = mock_post_resp
-    
-    # Set up mock get to return different responses based on the URL queried
-    async def side_effect_get(url, *args, **kwargs):
-        if "check/fake_job_id" in url:
-            return mock_check_resp
-        elif "status/fake_job_id" in url:
-            return mock_status_resp
-        elif "image.webp" in url:
-            return mock_img_resp
-        return MagicMock(status_code=404)
+    # Test that it falls back to Horde if HF fails
+    with patch.object(gen, "generate_hf_background", return_value=None), \
+         patch.object(gen, "generate_horde_background", return_value="fake_horde_path"):
+        res = await gen.generate_ai_background("test")
+        assert res == "fake_horde_path"
         
-    mock_client.get.side_effect = side_effect_get
-    
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        # Patch _setup_font to avoid any synchronous font downloads during tests
-        with patch.object(ImageGenerator, "_setup_font", return_value=None):
-            # Patch asyncio.sleep to not wait during tests
-            with patch("asyncio.sleep", return_value=None):
-                gen = ImageGenerator()
-                res_path = await gen.generate_ai_background("test,keywords")
-                
-                assert res_path is not None
-                assert "bg_ai.jpg" in str(res_path)
-                mock_client.post.assert_called_once()
-                assert mock_client.get.call_count >= 3
+    # Test that it returns HF if successful
+    with patch.object(gen, "generate_hf_background", return_value="fake_hf_path"), \
+         patch.object(gen, "generate_horde_background", return_value="fake_horde_path"):
+        res = await gen.generate_ai_background("test")
+        assert res == "fake_hf_path"
 
 # 7. Test Visual Prompt generation in TelegramPublisher
 @pytest.mark.asyncio

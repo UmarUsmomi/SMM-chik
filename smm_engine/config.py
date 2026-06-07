@@ -13,6 +13,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     GEMINI_API_KEY = GEMINI_API_KEY.strip().strip("'\"")
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if OPENROUTER_API_KEY:
+    OPENROUTER_API_KEY = OPENROUTER_API_KEY.strip().strip("'\"")
+
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+if HUGGINGFACE_API_KEY:
+    HUGGINGFACE_API_KEY = HUGGINGFACE_API_KEY.strip().strip("'\"")
+
 SCORER_MODEL = os.getenv("SCORER_MODEL", "gemini-3.1-flash-lite")
 ADAPTER_MODEL = os.getenv("ADAPTER_MODEL", "gemini-3.1-flash-lite")
 HUMANIZER_MODEL = os.getenv("HUMANIZER_MODEL", "gemini-3.1-flash-lite")

@@ -100,14 +100,42 @@ class ImageGenerator:
         "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=1280&fit=crop&q=80",  # Abstract dark tech
     ]
 
-    async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
-        """Generates a relevant background image using AI Horde (free, keyless alternative to Pollinations)"""
-        import urllib.parse
-        img_path = self.temp_dir / ("bg_ai_v.jpg" if vertical else "bg_ai.jpg")
+    async def generate_hf_background(self, keywords: str, vertical: bool = False) -> Path:
+        """Generates background using Hugging Face Serverless Inference API"""
+        from smm_engine.config import HUGGINGFACE_API_KEY
+        if not HUGGINGFACE_API_KEY:
+            return None
+            
+        img_path = self.temp_dir / ("bg_hf_v.jpg" if vertical else "bg_hf.jpg")
+        width, height = (720, 1280) if vertical else (1080, 1080)
+        clean_keywords = keywords.replace(",", " ")
+        prompt = f"cyberpunk synthwave hacker matrix code rain background {clean_keywords}, masterpiece, highly detailed, neon lights"
+        
+        api_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+        headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+        payload = {"inputs": prompt}
+        
+        logger.info(f"Generating AI cover using Hugging Face: {prompt[:60]}...")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(api_url, headers=headers, json=payload, timeout=45)
+                if resp.status_code == 200:
+                    with open(img_path, "wb") as f:
+                        f.write(resp.content)
+                    return img_path
+                else:
+                    logger.warning(f"Hugging Face API failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            logger.error(f"Error calling Hugging Face API: {e}")
+        return None
+
+    async def generate_horde_background(self, keywords: str, vertical: bool = False) -> Path:
+        """Generates background using AI Horde"""
+        img_path = self.temp_dir / ("bg_horde_v.jpg" if vertical else "bg_horde.jpg")
         width, height = (512, 768) if vertical else (512, 512)
         
         clean_keywords = keywords.replace(",", " ")
-        prompt = f"futuristic cyber tech style vector art representation of {clean_keywords}, high resolution, neon colors, synthwave gaming aesthetic"
+        prompt = f"cyberpunk matrix code rain glowing background {clean_keywords}, high resolution, hacker synthwave aesthetic"
         
         url = "https://aihorde.net/api/v2/generate/async"
         headers = {
@@ -116,54 +144,47 @@ class ImageGenerator:
         }
         payload = {
             "prompt": prompt,
-            "params": {
-                "n": 1,
-                "width": width,
-                "height": height,
-                "steps": 15,
-                "cfg_scale": 7.0
-            }
+            "params": {"n": 1, "width": width, "height": height, "steps": 15, "cfg_scale": 7.0}
         }
         
-        logger.info(f"Generating AI cover background using AI Horde: {prompt[:60]}...")
+        logger.info(f"Generating AI cover using AI Horde: {prompt[:60]}...")
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, json=payload, headers=headers, timeout=15)
                 if resp.status_code != 202:
-                    logger.warning(f"AI Horde submission failed: {resp.status_code} {resp.text}")
                     return None
                 
                 job_id = resp.json().get("id")
-                if not job_id:
-                    return None
+                if not job_id: return None
                     
-                # Poll for result (max 15 checks, 3 seconds each = 45 seconds max)
                 import asyncio
                 for i in range(15):
                     await asyncio.sleep(3)
                     check_resp = await client.get(f"https://aihorde.net/api/v2/generate/check/{job_id}", timeout=10)
-                    if check_resp.status_code == 200:
-                        check_data = check_resp.json()
-                        if check_data.get("done"):
-                            status_resp = await client.get(f"https://aihorde.net/api/v2/generate/status/{job_id}", timeout=10)
-                            if status_resp.status_code == 200:
-                                status_data = status_resp.json()
-                                generations = status_data.get("generations", [])
-                                if generations:
-                                    img_url = generations[0].get("img")
-                                    img_resp = await client.get(img_url, timeout=15)
-                                    if img_resp.status_code == 200:
-                                        with open(img_path, "wb") as f:
-                                            f.write(img_resp.content)
-                                        logger.info("Successfully generated AI background cover via AI Horde.")
-                                        return img_path
-                    else:
-                        logger.warning(f"AI Horde check failed: {check_resp.status_code}")
+                    if check_resp.status_code == 200 and check_resp.json().get("done"):
+                        status_resp = await client.get(f"https://aihorde.net/api/v2/generate/status/{job_id}", timeout=10)
+                        if status_resp.status_code == 200:
+                            gens = status_resp.json().get("generations", [])
+                            if gens:
+                                img_resp = await client.get(gens[0].get("img"), timeout=15)
+                                if img_resp.status_code == 200:
+                                    with open(img_path, "wb") as f:
+                                        f.write(img_resp.content)
+                                    return img_path
+                    elif check_resp.status_code != 200:
                         break
-                logger.warning("AI Horde generation timed out or failed to complete in 45 seconds.")
         except Exception as e:
-            logger.error(f"Error generating AI background image via AI Horde: {e}")
+            logger.error(f"Error calling AI Horde: {e}")
         return None
+
+    async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
+        """Routes between Hugging Face and AI Horde based on availability"""
+        hf_path = await self.generate_hf_background(keywords, vertical)
+        if hf_path:
+            return hf_path
+            
+        logger.info("Falling back to AI Horde for image generation...")
+        return await self.generate_horde_background(keywords, vertical)
  
     async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
         """Downloads a relevant background image from LoremFlickr or falls back to Unsplash curated list"""
@@ -230,6 +251,44 @@ class ImageGenerator:
         except Exception as e:
             logger.error(f"Error downloading news background image: {e}")
         return None
+
+    def _apply_glitch_effect(self, img: Image.Image) -> Image.Image:
+        """Applies a cyber-glitch effect (color channel shift and scanlines)"""
+        import random
+        from PIL import ImageChops
+        
+        r, g, b = img.convert("RGB").split()
+        
+        # Shift channels horizontally
+        shift_r = random.randint(-4, 4)
+        shift_b = random.randint(-4, 4)
+        
+        r = ImageChops.offset(r, shift_r, 0)
+        b = ImageChops.offset(b, shift_b, 0)
+        
+        glitched = Image.merge("RGB", (r, g, b))
+        
+        # Add subtle scanlines
+        draw = ImageDraw.Draw(glitched)
+        width, height = glitched.size
+        for y in range(0, height, 4):
+            draw.line([(0, y), (width, y)], fill=(0, 0, 0), width=1)
+            
+        return glitched
+
+    def _draw_matrix_rain(self, draw: ImageDraw.ImageDraw, width: int, height: int, colors: dict, font):
+        """Draws procedural matrix code rain overlay"""
+        import random
+        brand_accent = colors.get("brand_accent", [217, 4, 41, 255])
+        chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*!<>/"
+        
+        for _ in range(150):
+            x = random.randint(0, width)
+            y = random.randint(0, height)
+            char = random.choice(chars)
+            # Vary opacity for depth
+            color = (brand_accent[0], brand_accent[1], brand_accent[2], random.randint(20, 100))
+            draw.text((x, y), char, font=font, fill=color)
 
     def _generate_procedural_background(self, width: int, height: int, colors: dict) -> Image.Image:
         """Generates a premium cyber tech style diagonal gradient background with a subtle grid overlay"""
@@ -311,7 +370,7 @@ class ImageGenerator:
             else:
                 img = self._generate_procedural_background(width, height, colors)
 
-            # 2. Apply vertical linear gradient overlay (makes background photo visible on top, dark at bottom)
+            # 2. Apply Matrix Rain and vertical linear gradient overlay
             gradient_img = Image.new("RGBA", (1, 10))
             dark_color = colors.get("brand_dark", [13, 15, 20, 255])
             for y in range(10):
@@ -322,6 +381,12 @@ class ImageGenerator:
             overlay = gradient_img.resize(img.size, Image.Resampling.BILINEAR)
             img = Image.alpha_composite(img, overlay)
             draw = ImageDraw.Draw(img)
+            
+            # Apply Matrix Rain overlay
+            font_wm = ImageFont.load_default()
+            if self.font_path and self.font_path.exists():
+                font_wm = ImageFont.truetype(str(self.font_path), 20)
+            self._draw_matrix_rain(draw, width, height, colors, font_wm)
  
             # 3. Draw minimalist HUD decorative elements
             brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
@@ -351,91 +416,8 @@ class ImageGenerator:
             draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset - bracket_len, height - bracket_offset)], fill=brand_accent, width=2)
             draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset, height - bracket_offset - bracket_len)], fill=brand_accent, width=2)
 
-            # 4. Draw Watermarks / Logo Badges at the top
-            font_size_wm = wm_config.get("font_size", 20)
-            if self.font_path and self.font_path.exists():
-                font_wm = ImageFont.truetype(str(self.font_path), font_size_wm)
-            else:
-                font_wm = ImageFont.load_default()
-                
-            # Draw Top-Left Brand Logo Badge (">_ CODE: ZERO")
-            logo_prefix = ">_ "
-            logo_text = "CODE: ZERO"
-            
-            try:
-                prefix_w = font_wm.getlength(logo_prefix)
-                text_w = font_wm.getlength(logo_text)
-            except AttributeError:
-                prefix_w = len(logo_prefix) * 10
-                text_w = len(logo_text) * 10
-                
-            logo_total_w = prefix_w + text_w
-            badge_padding_x = 16
-            badge_padding_y = 8
-            
-            logo_x1 = 40
-            logo_y1 = 40
-            logo_x2 = logo_x1 + logo_total_w + 2 * badge_padding_x
-            logo_y2 = logo_y1 + font_size_wm + 2 * badge_padding_y
-            
-            logo_bg = (dark_color[0], dark_color[1], dark_color[2], 200)
-            draw.rounded_rectangle(
-                [logo_x1, logo_y1, logo_x2, logo_y2],
-                radius=6,
-                fill=logo_bg,
-                outline=brand_accent,
-                width=1
-            )
-            
-            draw.text((logo_x1 + badge_padding_x, logo_y1 + badge_padding_y - 2), logo_prefix, font=font_wm, fill=brand_accent)
-            draw.text((logo_x1 + badge_padding_x + prefix_w, logo_y1 + badge_padding_y - 2), logo_text, font=font_wm, fill=(255, 255, 255, 255))
-            
-            # Draw Top-Right Theme Watermark Badge
-            text_parts = wm_config.get("text_parts", [])
-            parts_measured = []
-            total_wm_w = 0
-            for part in text_parts:
-                text_str = part.get("text", "")
-                color_type = part.get("color_type", "primary")
-                if color_type == "accent":
-                    color = tuple(colors.get("watermark_accent", [217, 4, 41, 255]))
-                else:
-                    color = tuple(colors.get("watermark_text", [255, 255, 255, 255]))
-                
-                part_font = font_wm
-                if any(ord(c) > 127 and not (0x0400 <= ord(c) <= 0x04FF) for c in text_str):
-                    for font_name in ["seguiemj.ttf", "arial.ttf", "msyh.ttc", "DejaVuSans.ttf", "NotoColorEmoji.ttf"]:
-                        try:
-                            part_font = ImageFont.truetype(font_name, font_size_wm)
-                            break
-                        except Exception:
-                            continue
-                            
-                try:
-                    w = part_font.getlength(text_str)
-                except AttributeError:
-                    w = len(text_str) * 10
-                    
-                total_wm_w += w
-                parts_measured.append((text_str, color, w, part_font))
-                
-            wm_x2 = width - 40
-            wm_x1 = wm_x2 - total_wm_w - 2 * badge_padding_x
-            wm_y1 = 40
-            wm_y2 = wm_y1 + font_size_wm + 2 * badge_padding_y
-            
-            draw.rounded_rectangle(
-                [wm_x1, wm_y1, wm_x2, wm_y2],
-                radius=6,
-                fill=logo_bg,
-                outline=(255, 255, 255, 40),
-                width=1
-            )
-            
-            current_x = wm_x1 + badge_padding_x
-            for text_str, color, w, part_font in parts_measured:
-                draw.text((current_x, wm_y1 + badge_padding_y - 2), text_str, font=part_font, fill=color)
-                current_x += w
+            # 4. Watermarks and Logo removed per design update.
+            # Emptying this section to make the layout cleaner and focus entirely on the AI theme.
 
             # 5. Headline Text Rendering
             text_color = tuple(colors.get("text_primary", [255, 255, 255, 255]))
@@ -464,9 +446,16 @@ class ImageGenerator:
             y_start = height - total_text_height - 100
             
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
-            shadow_color = (0, 0, 0, 180)
+            shadow_color = (0, 0, 0, 200)
+            glow_color = (brand_accent[0], brand_accent[1], brand_accent[2], 80) # Semi-transparent accent glow
             
             for line in wrapped_lines:
+                # Draw neon glow effect around the text
+                draw.text((pad_left - 3, y_start - 3), line, font=font, fill=glow_color)
+                draw.text((pad_left + 3, y_start + 3), line, font=font, fill=glow_color)
+                draw.text((pad_left - 3, y_start + 3), line, font=font, fill=glow_color)
+                draw.text((pad_left + 3, y_start - 3), line, font=font, fill=glow_color)
+                
                 # Draw elegant drop shadow
                 draw.text(
                     (pad_left + 2, y_start + 2),
@@ -483,8 +472,11 @@ class ImageGenerator:
                 )
                 y_start += font_size + 15
 
+            # Apply final Glitch effect to the image before saving
+            glitched_img = self._apply_glitch_effect(img)
+            
             # Save as JPEG
-            final_img = img.convert("RGB")
+            final_img = glitched_img.convert("RGB")
             final_img.save(output_path, "JPEG", quality=90)
             logger.info(f"Cover generated successfully at {output_path}")
             return output_path
