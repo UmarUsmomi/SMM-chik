@@ -276,9 +276,68 @@ class ImageGenerator:
             
         return glitched
 
-    def _draw_matrix_rain(self, draw: ImageDraw.ImageDraw, width: int, height: int, colors: dict, font):
-        """Matrix rain is disabled for a cleaner premium look."""
-        pass
+    def _draw_tech_graphics(self, draw: ImageDraw.ImageDraw, width: int, height: int, colors: dict):
+        """Draws subtle, high-tech graphical HUD elements and circuit node paths to fill the background"""
+        import math
+        brand_accent = tuple(colors.get("brand_accent", [217, 4, 41, 255]))
+        
+        # Opacities
+        accent_alpha = (brand_accent[0], brand_accent[1], brand_accent[2], 30) # ~12% opacity
+        white_alpha = (255, 255, 255, 20) # ~8% opacity
+        dot_accent = (brand_accent[0], brand_accent[1], brand_accent[2], 80) # higher opacity for accent nodes
+        dot_white = (255, 255, 255, 60) # higher opacity for white node borders
+        
+        # 1. Concentric HUD scanning reticle (placed in upper-middle area)
+        cx, cy = width // 2, int(height * 0.38)
+        
+        # Draw central reticle circle layers
+        draw.ellipse([cx - 130, cy - 130, cx + 130, cy + 130], outline=accent_alpha, width=1)
+        draw.ellipse([cx - 135, cy - 135, cx + 135, cy + 135], outline=white_alpha, width=1)
+        draw.ellipse([cx - 40, cy - 40, cx + 40, cy + 40], outline=accent_alpha, width=1)
+        
+        # Tick marks on the outer ring (8 directions)
+        for angle in [0, 45, 90, 135, 180, 225, 270, 315]:
+            rad = math.radians(angle)
+            x1 = cx + int(135 * math.cos(rad))
+            y1 = cy + int(135 * math.sin(rad))
+            x2 = cx + int(145 * math.cos(rad))
+            y2 = cy + int(145 * math.sin(rad))
+            draw.line([(x1, y1), (x2, y2)], fill=accent_alpha, width=1)
+            
+        # Draw small crosshair lines in the very center
+        draw.line([(cx - 25, cy), (cx - 8, cy)], fill=white_alpha, width=1)
+        draw.line([(cx + 8, cy), (cx + 25, cy)], fill=white_alpha, width=1)
+        draw.line([(cx, cy - 25), (cx, cy - 8)], fill=white_alpha, width=1)
+        draw.line([(cx, cy + 8), (cx, cy + 25)], fill=white_alpha, width=1)
+        
+        # 2. Draw procedural tech circuits / graphical data-node lines
+        # Define coordinates for nice geometric sci-fi circuit lines
+        circuits = [
+            # Circuit 1 (top-left)
+            [(60, 160), (180, 160), (220, 200)],
+            # Circuit 2 (top-right)
+            [(width - 60, 160), (width - 180, 160), (width - 220, 200)],
+            # Circuit 3 (middle-left)
+            [(60, cy - 30), (140, cy - 30), (180, cy + 10)],
+            # Circuit 4 (middle-right)
+            [(width - 60, cy - 30), (width - 140, cy - 30), (width - 180, cy + 10)]
+        ]
+        
+        for path in circuits:
+            # Draw circuit path lines
+            for i in range(len(path) - 1):
+                draw.line([path[i], path[i+1]], fill=white_alpha, width=1)
+            # Draw small circuit nodes/junction points
+            for idx, node in enumerate(path):
+                # Put a larger dot at the start or end of the circuit path
+                dot_size = 3 if idx == 0 or idx == len(path)-1 else 2
+                draw.ellipse(
+                    [node[0] - dot_size, node[1] - dot_size, node[0] + dot_size, node[1] + dot_size],
+                    fill=dot_accent,
+                    outline=dot_white,
+                    width=1
+                )
+
 
     def _generate_procedural_background(self, width: int, height: int, colors: dict) -> Image.Image:
         """Generates a premium cyber tech style diagonal gradient background with a subtle grid overlay"""
@@ -407,8 +466,28 @@ class ImageGenerator:
             draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset - bracket_len, height - bracket_offset)], fill=brand_accent, width=2)
             draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset, height - bracket_offset - bracket_len)], fill=brand_accent, width=2)
 
-            # 4. Watermarks and Logo removed per design update.
-            # Emptying this section to make the layout cleaner and focus entirely on the AI theme.
+            # 4. Tech graphics and minimalist channel badge
+            self._draw_tech_graphics(draw, width, height, colors)
+            
+            # Subtle top-center brand badge (fully graphic-themed, no raw game/patch text)
+            badge_text = "// NEUROSOFT GAMING //"
+            badge_font_size = 20
+            if self.font_path and self.font_path.exists():
+                badge_font = ImageFont.truetype(str(self.font_path), badge_font_size)
+            else:
+                badge_font = ImageFont.load_default()
+            
+            try:
+                badge_w = badge_font.getlength(badge_text)
+            except AttributeError:
+                badge_w = len(badge_text) * 11
+                
+            draw.text(
+                ((width - badge_w) // 2, 40),
+                badge_text,
+                font=badge_font,
+                fill=(255, 255, 255, 60) # semi-transparent white
+            )
 
             # 5. Headline Text Rendering
             text_color = tuple(colors.get("text_primary", [255, 255, 255, 255]))

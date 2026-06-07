@@ -73,11 +73,11 @@ Instructions:
 1. Identify and remove any AI-isms, cliches, or unnatural language.
 2. Rewrite sentences to be simple, human, and direct. Keep the hype/energetic/cool tone but make it sound like a real human wrote it.
 3. Keep it in Russian.
-4. IMPORTANT: Do NOT use HTML formatting EXCEPT for <blockquote>...</blockquote> tags, which MUST be preserved exactly as they are. Use standard markdown **bold** for emphasis.
+4. IMPORTANT: Do NOT use any HTML tags (strictly NO <blockquote>, <p>, or any other tags). Use standard markdown **bold** for emphasis.
 5. If the text is already good and has no AI-isms, return it as is. Do NOT add new details.
 6. Return ONLY the final cleaned text, without any explanations or meta-comments.
 7. IMPORTANT: Do NOT use `*` or `-` for bullet points. Keep the emoji bullets (e.g. 🤖 — текст) exactly as they were provided.
-8. IMPORTANT: Keep the final text under 700 characters to ensure it fits social media limits.
+8. IMPORTANT: Keep the final text strictly under 400 characters to ensure it fits social media limits. Make sure the text is logically complete and ends with a complete sentence.
 """
 
         try:

@@ -36,7 +36,7 @@ class ContentAdapter:
             
             # Combine body and tags if needed, or format as final post text
             hashtags = self._generate_hashtags(item.source, item.raw_data.get("tags", []))
-            final_text = f"{humanized_body}\n\n{hashtags}"
+            final_text = f"{humanized_body}\n\n{hashtags}".strip()
             
             # Validation: check for empty or literal 'None' string (common AI error under rate limit/blocks)
             if not humanized_title or not humanized_body:
@@ -62,7 +62,7 @@ class ContentAdapter:
                 return None
             return {
                 "title": raw_title.strip(),
-                "text": f"{raw_body.strip()}\n\n{self._generate_hashtags(item.source, item.raw_data.get('tags', []))}"
+                "text": f"{raw_body.strip()}\n\n{self._generate_hashtags(item.source, item.raw_data.get('tags', []))}".strip()
             }
 
     async def _adapt_pass(self, item: NewsItem) -> Optional[Dict[str, str]]:
@@ -73,7 +73,7 @@ class ContentAdapter:
         audience = STYLE_GUIDE.get("tone", {}).get("audience", "разработчики, геймеры, гики, энтузиасты ИИ")
         
         formatting = STYLE_GUIDE.get("formatting", {})
-        max_length = formatting.get("max_length", 500)
+        max_length = formatting.get("max_length", 400)
         
         prompt = f"""
 Ты — ведущий копирайтер Telegram-канала "НейроСофт Гейминг".
@@ -81,14 +81,15 @@ class ContentAdapter:
 Тональность: {tone}
 
 ФОРМАТ ПОСТА (СТРОГО):
-1. Введение-цитата: Самая главная мысль или суть новости, обернутая в теги <blockquote>...</blockquote>.
-2. Основной текст: Одно-два поясняющих предложения после цитаты.
-3. Основные пункты: Краткий маркированный список. ВМЕСТО звездочек или тире используй подходящие по смыслу эмодзи, за которыми следует тире (например: 🤖 — текст). Ключевые слова выделяй **жирным** шрифтом (две звездочки).
-4. Заключительный вопрос: Закончи пост одним вовлекающим вопросом с эмодзи 💬.
+1. Введение: Самая главная мысль или суть новости (одно-два предложения). Пиши КАТЕГОРИЧЕСКИ БЕЗ каких-либо HTML/XML тегов (никаких <blockquote>, <p> и т.д.).
+2. Основные пункты: Краткий маркированный список. ВМЕСТО звездочек или тире используй подходящие по смыслу эмодзи, за которыми следует тире (например: 🤖 — текст). Ключевые слова выделяй **жирным** шрифтом (две звездочки).
+3. Заключительный вопрос: Закончи пост одним вовлекающим вопросом с эмодзи 💬.
 
 СТРОГИЕ ПРАВИЛА:
 {style_rules_str}
 - Длина всего поста: СТРОГО до {max_length} символов! Пиши максимально емко.
+- НЕ используй HTML теги. Никаких blockquote!
+- Пост должен оканчиваться логически завершенным предложением, без обрезки на полуслове.
 - НЕ используй хэштеги — они запрещены.
 - В списках КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать символ `*` для маркеров! Только эмодзи!
 
@@ -100,7 +101,7 @@ class ContentAdapter:
 Верни СТРОГО JSON:
 {{
   "title": "ЗАГОЛОВОК С ЭМОДЗИ В UPPERCASE",
-  "body": "Структурированный текст поста (введение <blockquote>, пункты с эмодзи 🤖 —, вопрос 💬)"
+  "body": "Структурированный текст поста (введение, пункты с эмодзи 🤖 —, вопрос 💬)"
 }}
 """
         try:

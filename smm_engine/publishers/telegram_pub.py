@@ -40,6 +40,9 @@ class TelegramPublisher:
                 break
             raw_text = unescaped
         
+        # Completely strip blockquote tags as requested by the user
+        raw_text = re.sub(r'</?blockquote(?:\s+expandable)?>', '', raw_text, flags=re.IGNORECASE)
+        
         # Preprocess HTML lists and line breaks to be compatible with Telegram HTML parse mode
         raw_text = re.sub(r'<br\s*/?>', '\n', raw_text, flags=re.IGNORECASE)
         raw_text = re.sub(r'<p[^>]*>', '', raw_text, flags=re.IGNORECASE)
@@ -61,8 +64,6 @@ class TelegramPublisher:
             '<i>', '</i>', '<em>', '</em>',
             '<code>', '</code>',
             '<pre>', '</pre>',
-            '<blockquote>', '</blockquote>',
-            '<blockquote expandable>',
             '<u>', '</u>', '<ins>', '</ins>',
             '<s>', '</s>', '<strike>', '</strike>', '<del>', '</del>',
             '<tg-spoiler>', '</tg-spoiler>'
@@ -78,7 +79,7 @@ class TelegramPublisher:
                 is_allowed = False
                 if tag_clean in allowed_tags:
                     is_allowed = True
-                elif tag_clean.startswith('<a ') or tag_clean.startswith('<code ') or tag_clean.startswith('<pre ') or tag_clean.startswith('<blockquote '):
+                elif tag_clean.startswith('<a ') or tag_clean.startswith('<code ') or tag_clean.startswith('<pre '):
                     # Keep complex allowed tags with attributes (e.g. href, language class, or expandable)
                     is_allowed = True
                     
