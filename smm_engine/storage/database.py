@@ -31,10 +31,16 @@ class ConnectionProxy:
         self._conn.close()
 
 class DatabaseManager:
+    _initialized_dbs = set()
+
     def __init__(self):
         self.use_postgres = bool(DATABASE_URL)
         _conn_var.set(None)
-        self._init_db()
+        
+        db_key = DATABASE_URL if self.use_postgres else SQLITE_DB_PATH
+        if db_key not in DatabaseManager._initialized_dbs:
+            self._init_db()
+            DatabaseManager._initialized_dbs.add(db_key)
 
     def close_current(self):
         """Manually closes the context-cached connection if any"""

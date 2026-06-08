@@ -79,13 +79,27 @@ async def generate_content_with_retry(prompt: str, initial_model: str, generatio
     """Generates content using Gemini API with exponential backoff on 429/RPM limits
     and fallback to OpenRouter free-tier models on daily quota exhaustion."""
     
-    # Construct sequence of models to try
+    # Construct sequence of models to try, filtering out OpenRouter models if key is missing
+    from smm_engine.config import OPENROUTER_API_KEY
+    has_or_key = bool(OPENROUTER_API_KEY)
+    
+    def is_allowed(model_name):
+        if model_name.startswith("openrouter:") and not has_or_key:
+            return False
+        return True
+
     models_to_try = []
-    if initial_model:
+    if initial_model and is_allowed(initial_model):
         models_to_try.append(initial_model)
     for model in FALLBACK_MODELS:
-        if model not in models_to_try:
+        if model not in models_to_try and is_allowed(model):
             models_to_try.append(model)
+            
+    if not has_or_key:
+        # Check if we have any OpenRouter models filtered out and log warning
+        has_filtered = any(m.startswith("openrouter:") for m in [initial_model] + FALLBACK_MODELS if m)
+        if has_filtered:
+            logger.warning("OPENROUTER_API_KEY is missing. All OpenRouter fallback models will be skipped.")
             
     last_exception = None
     

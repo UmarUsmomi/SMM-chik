@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -39,7 +40,32 @@ logging.getLogger().addHandler(memory_log_handler)
 
 logger = logging.getLogger("telegram_bot")
 
-app = FastAPI(title="SMM Automator Queue Bot")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Auto-registers Telegram Webhook on startup using Render URL"""
+    import os
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if render_url and TELEGRAM_BOT_TOKEN:
+        webhook_url = f"{render_url}/webhook"
+        set_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(set_url, json={"url": webhook_url}, timeout=10)
+                logger.info(f"Auto-setting Telegram Webhook to {webhook_url}: {resp.json()}")
+        except Exception as e:
+            logger.error(f"Failed to auto-set Telegram Webhook on startup: {e}")
+    yield
+
+app = FastAPI(title="SMM Automator Queue Bot", lifespan=lifespan)
+
+@app.middleware("http")
+async def db_session_middleware(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        db.close_current()
+
 db = DatabaseManager()
 publisher = TelegramPublisher()
 templates = Jinja2Templates(directory="web/templates")
@@ -139,20 +165,7 @@ async def publish_item_background(item_id: int, chat_id: int, message_id: int):
         async with publishing_lock:
             active_publishing_ids.discard(item_id)
 
-@app.on_event("startup")
-async def startup_event():
-    """Auto-registers Telegram Webhook on startup using Render URL"""
-    import os
-    render_url = os.getenv("RENDER_EXTERNAL_URL")
-    if render_url and TELEGRAM_BOT_TOKEN:
-        webhook_url = f"{render_url}/webhook"
-        set_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(set_url, json={"url": webhook_url}, timeout=10)
-                logger.info(f"Auto-setting Telegram Webhook to {webhook_url}: {resp.json()}")
-        except Exception as e:
-            logger.error(f"Failed to auto-set Telegram Webhook on startup: {e}")
+
 
 async def send_bot_message(chat_id: int, text: str, reply_markup: dict = None):
     """Helper to send a message to a user in the bot"""

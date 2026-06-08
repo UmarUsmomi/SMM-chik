@@ -338,6 +338,28 @@ class ImageGenerator:
                     width=1
                 )
 
+        # 3. Draw tech diagnostic tick scales along the top/bottom inner borders
+        offset = 24
+        tick_y_top = offset + 1
+        tick_y_bottom = height - offset - 4
+        
+        for x in range(offset + 60, width - offset - 60, 40):
+            # Draw tiny ticks
+            is_major = (x - offset) % 160 == 0
+            tick_h = 6 if is_major else 3
+            draw.line([(x, tick_y_top), (x, tick_y_top + tick_h)], fill=white_alpha, width=1)
+            draw.line([(x, tick_y_bottom), (x, tick_y_bottom - tick_h)], fill=white_alpha, width=1)
+
+        # 4. Small HUD corner labels (using Montserrat-Bold or system font)
+        hud_font_size = 12
+        if self.font_path and self.font_path.exists():
+            hud_font = ImageFont.truetype(str(self.font_path), hud_font_size)
+        else:
+            hud_font = ImageFont.load_default()
+            
+        draw.text((offset + 12, offset + 8), "SYS_INIT //", font=hud_font, fill=white_alpha)
+        draw.text((width - offset - 90, offset + 8), "ONLINE [85%]", font=hud_font, fill=white_alpha)
+
 
     def _generate_procedural_background(self, width: int, height: int, colors: dict) -> Image.Image:
         """Generates a premium cyber tech style diagonal gradient background with a subtle grid overlay"""
