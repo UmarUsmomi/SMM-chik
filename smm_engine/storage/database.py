@@ -243,6 +243,7 @@ class DatabaseManager:
         
         raw_json = json.dumps(raw_data, ensure_ascii=False)
         now = datetime.now()
+        db_now = now if self.use_postgres else now.isoformat()
         
         try:
             if self.use_postgres:
@@ -253,7 +254,7 @@ class DatabaseManager:
                     ON CONFLICT (source, source_id) DO NOTHING
                     RETURNING id;
                     """,
-                    (source, source_id, title, url, raw_json, now)
+                    (source, source_id, title, url, raw_json, db_now)
                 )
                 res = cursor.fetchone()
                 item_id = res[0] if res else None
@@ -263,7 +264,7 @@ class DatabaseManager:
                     INSERT OR IGNORE INTO news_items (source, source_id, title, url, raw_data, created_at)
                     VALUES (?, ?, ?, ?, ?, ?);
                     """,
-                    (source, source_id, title, url, raw_json, now)
+                    (source, source_id, title, url, raw_json, db_now)
                 )
                 item_id = cursor.lastrowid
                 
@@ -334,13 +335,14 @@ class DatabaseManager:
         
         param_placeholder = "%s" if self.use_postgres else "?"
         now = datetime.now()
+        db_now = now if self.use_postgres else now.isoformat()
         query = f"""
             UPDATE news_items 
             SET status = 'published', published_at = {param_placeholder}
             WHERE id = {param_placeholder}
         """
         
-        cursor.execute(query, (now, item_id))
+        cursor.execute(query, (db_now, item_id))
         conn.commit()
         cursor.close()
         conn.close()
