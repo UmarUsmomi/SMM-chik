@@ -26,6 +26,25 @@ def test_image_generator_vertical(tmp_path):
         assert output_path.exists()
         assert "final_cover_v" in output_path.name
 
+def test_image_generator_watermark(tmp_path):
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path):
+        img_gen = ImageGenerator()
+        # Inject custom watermark to verify theme configuration loading
+        img_gen.theme["watermark"] = {
+            "font_size": 20,
+            "text_parts": [
+                {"text": "CustomWatermarkText", "color_type": "primary"},
+                {"text": "⚡", "color_type": "accent"}
+            ]
+        }
+        output_path = img_gen.create_cover("Watermark Test Cover Title", bg_path=None)
+        
+        assert output_path is not None
+        assert output_path.exists()
+        from PIL import Image
+        img = Image.open(output_path)
+        assert img.size == (1080, 1080)
+
 @pytest.mark.asyncio
 async def test_qr_code_generator(tmp_path):
     with patch("smm_engine.media.qr_code.BASE_DIR", tmp_path):
@@ -138,4 +157,27 @@ async def test_video_generator(tmp_path):
         assert video_path is not None
         assert video_path.exists()
         assert video_path.name == "output_reel.mp4"
+
+
+def test_image_generator_theme_color_formats(tmp_path):
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path):
+        img_gen = ImageGenerator()
+        
+        # Set custom theme colors with diverse formats (hex strings, tuples, lists, and empty/None values)
+        img_gen.theme["colors"] = {
+            "background_fallback": "#0d0f14",          # 6-char hex string
+            "overlay_dim": "#0d0f1496",                # 8-char hex string with alpha
+            "text_primary": (255, 255, 255),           # tuple (RGB)
+            "brand_dark": [13, 15, 20, 255],           # list (RGBA)
+            "brand_accent": (217, 4, 41, 255),         # tuple (RGBA)
+            "watermark_text": None,                     # None value fallback
+            "watermark_accent": ""                      # Empty string fallback
+        }
+        
+        output_path = img_gen.create_cover("Test Color Formats Hex and Tuples", bg_path=None)
+        
+        assert output_path is not None
+        assert output_path.exists()
+        assert output_path.suffix == ".jpg"
+
 
