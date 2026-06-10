@@ -50,9 +50,15 @@ async def lifespan(app: FastAPI):
     if render_url and TELEGRAM_BOT_TOKEN:
         webhook_url = f"{render_url}/webhook"
         set_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        payload = {"url": webhook_url}
+        
+        webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+        if webhook_secret:
+            payload["secret_token"] = webhook_secret
+            
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(set_url, json={"url": webhook_url}, timeout=10)
+                resp = await client.post(set_url, json=payload, timeout=10)
                 logger.info(f"Auto-setting Telegram Webhook to {webhook_url}: {resp.json()}")
         except Exception as e:
             logger.error(f"Failed to auto-set Telegram Webhook on startup: {e}")
@@ -67,6 +73,26 @@ async def db_session_middleware(request: Request, call_next):
         return response
     finally:
         db.close_current()
+
+@app.middleware("http")
+async def add_security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    # Content-Security-Policy (allows local assets, fonts, CDN Chart.js)
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    response.headers["Content-Security-Policy"] = csp
+    return response
 
 db = DatabaseManager()
 publisher = TelegramPublisher()
@@ -264,6 +290,15 @@ async def run_pipeline_task():
 @app.post("/webhook")
 async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     """Main webhook endpoint for Telegram Bot Updates"""
+    # 0. Check secret token if configured
+    import os
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if webhook_secret:
+        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if token != webhook_secret:
+            logger.warning("Rejected unauthorized webhook request: invalid secret token")
+            raise HTTPException(status_code=403, detail="Forbidden")
+            
     try:
         update = await request.json()
         logger.info(f"Received update: {update}")

@@ -181,3 +181,52 @@ def test_dashboard_security_enforced():
         resp = client.get("/", auth=("admin", "secret_pass"))
         assert resp.status_code == 200
 
+
+def test_security_headers_enforced():
+    """Verify that secure HTTP headers are included in dashboard and API responses."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["X-Frame-Options"] == "DENY"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert "max-age=" in resp.headers["Strict-Transport-Security"]
+    assert "Content-Security-Policy" in resp.headers
+
+
+def test_webhook_security_token():
+    """Verify webhook token validation behavior."""
+    # 1. Without secret configured: should allow requests
+    with patch("os.getenv", side_effect=lambda key, default=None: None):
+        payload = {"update_id": 9999, "message": {"chat": {"id": 123}, "text": "hello"}}
+        resp = client.post("/webhook", json=payload)
+        assert resp.status_code == 200
+
+    # 2. With secret configured
+    def mock_getenv(key, default=None):
+        if key == "TELEGRAM_WEBHOOK_SECRET":
+            return "super_secret_webhook_token"
+        return None
+
+    with patch("os.getenv", side_effect=mock_getenv):
+        payload = {"update_id": 9999, "message": {"chat": {"id": 123}, "text": "hello"}}
+        
+        # Access with incorrect/missing token -> 403 Forbidden
+        resp = client.post("/webhook", json=payload)
+        assert resp.status_code == 403
+
+        resp = client.post(
+            "/webhook", 
+            json=payload, 
+            headers={"X-Telegram-Bot-Api-Secret-Token": "wrong_token"}
+        )
+        assert resp.status_code == 403
+
+        # Access with correct token -> 200 OK
+        resp = client.post(
+            "/webhook", 
+            json=payload, 
+            headers={"X-Telegram-Bot-Api-Secret-Token": "super_secret_webhook_token"}
+        )
+        assert resp.status_code == 200
+
+
