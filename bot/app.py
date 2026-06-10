@@ -1,11 +1,13 @@
 import logging
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Depends, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import httpx
+from typing import Optional
 
 from smm_engine.config import TELEGRAM_BOT_TOKEN
 from smm_engine.storage.database import DatabaseManager
@@ -69,6 +71,34 @@ async def db_session_middleware(request: Request, call_next):
 db = DatabaseManager()
 publisher = TelegramPublisher()
 templates = Jinja2Templates(directory="web/templates")
+
+security = HTTPBasic(auto_error=False)
+
+def authenticate_dashboard(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
+    import os
+    username = os.getenv("DASHBOARD_USERNAME")
+    password = os.getenv("DASHBOARD_PASSWORD")
+    
+    # If not configured, bypass authentication (allow all)
+    if not username or not password:
+        return None
+        
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+        
+    correct_username = (credentials.username == username)
+    correct_password = (credentials.password == password)
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 # State variables to prevent concurrent pipeline runs
 pipeline_running = False
@@ -366,7 +396,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     return {"status": "ok"}
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard_view(request: Request):
+async def dashboard_view(request: Request, username: Optional[str] = Depends(authenticate_dashboard)):
     """Renders the HTML Dashboard"""
     try:
         # Fetch stats
@@ -465,7 +495,7 @@ class TogglePauseReq(BaseModel):
     active: bool
 
 @app.post("/api/toggle-pause")
-async def api_toggle_pause(req: TogglePauseReq):
+async def api_toggle_pause(req: TogglePauseReq, username: Optional[str] = Depends(authenticate_dashboard)):
     """API endpoint to toggle auto-publishing state"""
     # If active (checked), then is_paused is False
     db.set_setting("is_paused", "false" if req.active else "true")
@@ -475,7 +505,7 @@ class ModerateReq(BaseModel):
     action: str
 
 @app.post("/api/moderate/{item_id}")
-async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: BackgroundTasks):
+async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: BackgroundTasks, username: Optional[str] = Depends(authenticate_dashboard)):
     """API endpoint to approve/reject an item from dashboard"""
     item = db.get_by_id(item_id)
     if not item:
@@ -494,7 +524,7 @@ async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: Ba
     raise HTTPException(status_code=400, detail="Invalid action")
 
 @app.post("/api/force-pipeline")
-async def api_force_pipeline(background_tasks: BackgroundTasks):
+async def api_force_pipeline(background_tasks: BackgroundTasks, username: Optional[str] = Depends(authenticate_dashboard)):
     """API endpoint to trigger pipeline execution"""
     global pipeline_running
     if pipeline_running:
@@ -503,13 +533,13 @@ async def api_force_pipeline(background_tasks: BackgroundTasks):
     return {"status": "ok", "message": "Pipeline started"}
 
 @app.post("/api/clear-db")
-async def api_clear_db():
+async def api_clear_db(username: Optional[str] = Depends(authenticate_dashboard)):
     """API endpoint to clear database for testing duplicate re-scraping"""
     db.clear_all_news()
     return {"status": "ok", "message": "Database cleared"}
 
 @app.get("/api/test-models")
-async def test_models():
+async def test_models(username: Optional[str] = Depends(authenticate_dashboard)):
     import google.generativeai as genai
     from smm_engine.config import GEMINI_API_KEY
     if not GEMINI_API_KEY:
@@ -522,7 +552,7 @@ async def test_models():
         return {"error": str(e)}
 
 @app.get("/api/test-telegram")
-async def test_telegram():
+async def test_telegram(username: Optional[str] = Depends(authenticate_dashboard)):
     import httpx
     from smm_engine.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
@@ -546,7 +576,7 @@ async def test_telegram():
 
 
 @app.get("/api/logs")
-def get_api_logs():
+def get_api_logs(username: Optional[str] = Depends(authenticate_dashboard)):
     """Returns the last 100 log lines stored in memory"""
     return {"logs": memory_log_handler.get_logs()}
 

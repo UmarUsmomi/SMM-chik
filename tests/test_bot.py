@@ -149,3 +149,35 @@ def test_bot_approve(mock_pub, mock_answer, mock_edit, mock_send):
     # Verify published in DB
     item = bot.app.db.get_by_id(item_id)
     assert item["status"] == "published"
+
+
+def test_dashboard_security_bypass():
+    """Verify that when no basic auth environment variables are set, access is permitted without credentials."""
+    with patch("os.getenv", side_effect=lambda key, default=None: None):
+        resp = client.get("/")
+        assert resp.status_code == 200
+
+
+def test_dashboard_security_enforced():
+    """Verify that when basic auth environment variables are configured, credentials are required."""
+    def mock_getenv(key, default=None):
+        if key == "DASHBOARD_USERNAME":
+            return "admin"
+        if key == "DASHBOARD_PASSWORD":
+            return "secret_pass"
+        return None
+
+    with patch("os.getenv", side_effect=mock_getenv):
+        # 1. Access without credentials should return 401
+        resp = client.get("/")
+        assert resp.status_code == 401
+        assert "WWW-Authenticate" in resp.headers
+
+        # 2. Access with wrong credentials should return 401
+        resp = client.get("/", auth=("admin", "wrong"))
+        assert resp.status_code == 401
+
+        # 3. Access with correct credentials should return 200
+        resp = client.get("/", auth=("admin", "secret_pass"))
+        assert resp.status_code == 200
+
