@@ -40,8 +40,31 @@ class TelegramPublisher:
                 break
             raw_text = unescaped
         
-        # Completely strip blockquote tags as requested by the user
-        raw_text = re.sub(r'</?blockquote(?:\s+expandable)?>', '', raw_text, flags=re.IGNORECASE)
+        # Convert Markdown blockquotes (lines starting with "> ") to HTML blockquote tags
+        # Collect consecutive "> " lines into a single <blockquote expandable> block
+        lines = raw_text.split('\n')
+        converted_lines = []
+        in_quote = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('> '):
+                if not in_quote:
+                    converted_lines.append('<blockquote expandable>')
+                    in_quote = True
+                converted_lines.append(stripped[2:])  # Remove "> " prefix
+            elif stripped == '>':
+                if not in_quote:
+                    converted_lines.append('<blockquote expandable>')
+                    in_quote = True
+                converted_lines.append('')  # Empty line inside quote
+            else:
+                if in_quote:
+                    converted_lines.append('</blockquote>')
+                    in_quote = False
+                converted_lines.append(line)
+        if in_quote:
+            converted_lines.append('</blockquote>')
+        raw_text = '\n'.join(converted_lines)
         
         # Preprocess HTML lists and line breaks to be compatible with Telegram HTML parse mode
         raw_text = re.sub(r'<br\s*/?>', '\n', raw_text, flags=re.IGNORECASE)
@@ -66,7 +89,8 @@ class TelegramPublisher:
             '<pre>', '</pre>',
             '<u>', '</u>', '<ins>', '</ins>',
             '<s>', '</s>', '<strike>', '</strike>', '<del>', '</del>',
-            '<tg-spoiler>', '</tg-spoiler>'
+            '<tg-spoiler>', '</tg-spoiler>',
+            '<blockquote>', '</blockquote>'
         }
         
         result = []
@@ -79,7 +103,7 @@ class TelegramPublisher:
                 is_allowed = False
                 if tag_clean in allowed_tags:
                     is_allowed = True
-                elif tag_clean.startswith('<a ') or tag_clean.startswith('<code ') or tag_clean.startswith('<pre '):
+                elif tag_clean.startswith('<a ') or tag_clean.startswith('<code ') or tag_clean.startswith('<pre ') or tag_clean.startswith('<blockquote'):
                     # Keep complex allowed tags with attributes (e.g. href, language class, or expandable)
                     is_allowed = True
                     

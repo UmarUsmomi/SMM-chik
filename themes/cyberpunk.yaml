@@ -1,6 +1,7 @@
 # SMM Automator Branding Theme Configuration - Cyberpunk Style
 
 name: "Cyberpunk neon theme"
+badge_text: "// CYBERPUNK NEXUS //"
 
 colors:
   background_fallback: [10, 10, 15, 255] # RGBA

@@ -1,6 +1,7 @@
 # SMM Automator Branding Theme Configuration
 
 name: "Default Dark & Red Tech/Gaming Theme"
+badge_text: "// NEUROSOFT GAMING //"
 
 colors:
   background_fallback: [13, 15, 20, 255] # RGBA

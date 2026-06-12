@@ -20,15 +20,23 @@ def test_telegram_html_formatting_whitelist():
     assert "<b>world</b>" in res
     assert "<code>code</code>" in res
     
-    # Test custom blockquote is stripped
+    # Test blockquote tags are preserved (whitelisted)
     res = pub._format_markdown_to_html("Quote: <blockquote expandable>collapsible</blockquote>")
     assert "collapsible" in res
-    assert "blockquote" not in res
+    assert "<blockquote expandable>" in res
+    assert "</blockquote>" in res
     
-    # Test double-escaped blockquote is stripped
+    # Test double-escaped blockquote is unescaped and preserved
     res = pub._format_markdown_to_html("Escaped: &lt;blockquote expandable&gt;text&lt;/blockquote&gt;")
     assert "text" in res
-    assert "blockquote" not in res
+    assert "<blockquote expandable>" in res
+    assert "</blockquote>" in res
+    
+    # Test Markdown blockquote conversion (> prefix)
+    res = pub._format_markdown_to_html("> This is a quote")
+    assert "<blockquote expandable>" in res
+    assert "This is a quote" in res
+    assert "</blockquote>" in res
     
     # Test invalid HTML tags are escaped and rendered as safe text
     res = pub._format_markdown_to_html("Bad tag: <script>alert(1)</script>")
@@ -366,11 +374,11 @@ def test_telegram_publisher_double_unescaping():
     from smm_engine.publishers.telegram_pub import TelegramPublisher
     pub = TelegramPublisher()
     
-    # Test double-escaped HTML formatting with blockquote (should be stripped)
+    # Test double-escaped HTML formatting with blockquote (should be preserved)
     text = "&amp;lt;blockquote expandable&amp;gt;Double escaped text&amp;lt;/blockquote&amp;gt;"
     res = pub._format_markdown_to_html(text)
     assert "Double escaped text" in res
-    assert "blockquote" not in res
+    assert "<blockquote expandable>" in res
     assert "&amp;" not in res
 
 # 14. Test LoremFlickr URL Format with /any OR Search

@@ -181,3 +181,46 @@ def test_image_generator_theme_color_formats(tmp_path):
         assert output_path.suffix == ".jpg"
 
 
+@pytest.mark.asyncio
+async def test_image_generator_pollinations(tmp_path):
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path):
+        img_gen = ImageGenerator()
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b"fake_jpeg_image_data_with_sufficient_length_to_pass_validation_which_is_over_1000_bytes" * 20
+        
+        with patch("httpx.AsyncClient.get", return_value=mock_response):
+            path = await img_gen.generate_pollinations_background("test_keywords")
+            assert path is not None
+            assert path.exists()
+            assert "bg_poll.jpg" in path.name
+
+
+@pytest.mark.asyncio
+async def test_image_generator_cloudflare(tmp_path):
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path):
+        # Test missing keys first (should return None)
+        with patch("smm_engine.config.CLOUDFLARE_ACCOUNT_ID", None), \
+             patch("smm_engine.config.CLOUDFLARE_API_TOKEN", None):
+            img_gen = ImageGenerator()
+            path = await img_gen.generate_cloudflare_background("test_keywords")
+            assert path is None
+
+        # Test with keys and successful mock call
+        with patch("smm_engine.config.CLOUDFLARE_ACCOUNT_ID", "dummy_cf_account"), \
+             patch("smm_engine.config.CLOUDFLARE_API_TOKEN", "dummy_cf_token"):
+            img_gen = ImageGenerator()
+            
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = b"fake_cf_image_data_with_sufficient_length_to_pass_validation_which_is_over_1000_bytes" * 20
+            
+            with patch("httpx.AsyncClient.post", return_value=mock_response):
+                path = await img_gen.generate_cloudflare_background("test_keywords")
+                assert path is not None
+                assert path.exists()
+                assert "bg_cf.jpg" in path.name
+
+
+

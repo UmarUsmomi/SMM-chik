@@ -216,12 +216,108 @@ class ImageGenerator:
             logger.error(f"Error calling AI Horde: {e}")
         return None
 
+    async def generate_pollinations_background(self, keywords: str, vertical: bool = False) -> Path:
+        """Generates background using Pollinations.ai — fully free, no API key needed.
+        Uses a simple GET request with the prompt encoded in the URL."""
+        import urllib.parse
+        
+        img_path = self.temp_dir / ("bg_poll_v.jpg" if vertical else "bg_poll.jpg")
+        width, height = (720, 1280) if vertical else (1080, 1080)
+        
+        clean_keywords = keywords.replace(",", " ")
+        prompt = (
+            f"dark high-contrast techno-gaming background featuring {clean_keywords}, "
+            "cyberpunk neon accents, digital HUD wireframes, circuit lines in electric cyan "
+            "and vibrant red, deep black shadows, futuristic gaming aesthetic, synthwave mood, "
+            "dramatic atmospheric lighting, 8k resolution, no text no letters no watermark"
+        )
+        
+        encoded_prompt = urllib.parse.quote(prompt)
+        url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?width={width}&height={height}&nologo=true&seed={hash(keywords) % 100000}"
+        )
+        
+        logger.info(f"Generating AI cover using Pollinations.ai: {prompt[:60]}...")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=30, follow_redirects=True)
+                if resp.status_code == 200 and len(resp.content) > 1000:
+                    with open(img_path, "wb") as f:
+                        f.write(resp.content)
+                    logger.info("Successfully generated background via Pollinations.ai")
+                    return img_path
+                else:
+                    logger.warning(f"Pollinations.ai failed: status={resp.status_code}, size={len(resp.content)}")
+        except Exception as e:
+            logger.error(f"Error calling Pollinations.ai: {e}")
+        return None
+
+    async def generate_cloudflare_background(self, keywords: str, vertical: bool = False) -> Path:
+        """Generates background using Cloudflare Workers AI REST API.
+        Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env variables.
+        Uses @cf/black-forest-labs/flux-1-schnell model with 10,000 free neurons/day."""
+        from smm_engine.config import CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
+        if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
+            return None
+        
+        img_path = self.temp_dir / ("bg_cf_v.jpg" if vertical else "bg_cf.jpg")
+        
+        clean_keywords = keywords.replace(",", " ")
+        prompt = (
+            f"A dark, high-contrast techno-gaming background featuring {clean_keywords}. "
+            "Cyberpunk neon accents in electric cyan and vibrant red, digital HUD wireframes, "
+            "glowing circuit lines, deep black shadows in lower half, futuristic gaming aesthetic, "
+            "synthwave mood, dramatic atmospheric lighting, sharp details, 8k resolution. "
+            "No text, letters, or watermark."
+        )
+        
+        api_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}"
+            "/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        )
+        headers = {
+            "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {"prompt": prompt}
+        
+        logger.info(f"Generating AI cover using Cloudflare Workers AI: {prompt[:60]}...")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(api_url, headers=headers, json=payload, timeout=30)
+                if resp.status_code == 200 and len(resp.content) > 1000:
+                    with open(img_path, "wb") as f:
+                        f.write(resp.content)
+                    logger.info("Successfully generated background via Cloudflare Workers AI")
+                    return img_path
+                else:
+                    logger.warning(f"Cloudflare Workers AI failed: status={resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error calling Cloudflare Workers AI: {e}")
+        return None
+
     async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
-        """Routes between Hugging Face and AI Horde based on availability"""
+        """Routes between AI image providers with graceful fallback chain:
+        HuggingFace → Pollinations.ai → Cloudflare Workers AI → AI Horde"""
+        # 1. Try HuggingFace (requires API key)
         hf_path = await self.generate_hf_background(keywords, vertical)
         if hf_path:
             return hf_path
-            
+        
+        # 2. Try Pollinations.ai (free, no key needed)
+        logger.info("Falling back to Pollinations.ai for image generation...")
+        poll_path = await self.generate_pollinations_background(keywords, vertical)
+        if poll_path:
+            return poll_path
+        
+        # 3. Try Cloudflare Workers AI (requires optional API key)
+        logger.info("Falling back to Cloudflare Workers AI for image generation...")
+        cf_path = await self.generate_cloudflare_background(keywords, vertical)
+        if cf_path:
+            return cf_path
+        
+        # 4. Try AI Horde (free, anonymous, slow)
         logger.info("Falling back to AI Horde for image generation...")
         return await self.generate_horde_background(keywords, vertical)
  
@@ -607,7 +703,7 @@ class ImageGenerator:
             self._draw_tech_graphics(draw, width, height, colors)
             
             # Subtle top-center brand badge (fully graphic-themed, no raw game/patch text)
-            badge_text = "// NEUROSOFT GAMING //"
+            badge_text = self.theme.get("badge_text", "// NEUROSOFT GAMING //")
             badge_font_size = 20
             if self.font_path and self.font_path.exists():
                 badge_font = ImageFont.truetype(str(self.font_path), badge_font_size)
