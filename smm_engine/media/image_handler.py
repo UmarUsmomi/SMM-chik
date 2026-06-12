@@ -45,18 +45,18 @@ class ImageGenerator:
         return default
 
     def _setup_font(self) -> Path:
-        """Returns the path to the bundled Montserrat-Bold font"""
-        font_file = Path(__file__).resolve().parent.parent.parent / "fonts" / "Montserrat-Bold.ttf"
+        """Returns the path to the bundled RussoOne-Regular font"""
+        font_file = Path(__file__).resolve().parent.parent.parent / "fonts" / "RussoOne-Regular.ttf"
         if font_file.exists():
-            logger.info(f"Using bundled Montserrat-Bold font: {font_file}")
+            logger.info(f"Using bundled RussoOne-Regular font: {font_file}")
             return font_file
             
         # Fallback to download if it does not exist for some reason
-        temp_font = self.temp_dir / "Montserrat-Bold.ttf"
+        temp_font = self.temp_dir / "RussoOne-Regular.ttf"
         if not temp_font.exists():
             try:
-                logger.info("Downloading Montserrat-Bold font...")
-                url = "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-Bold.ttf"
+                logger.info("Downloading RussoOne-Regular font...")
+                url = "https://github.com/google/fonts/raw/main/ofl/russoone/RussoOne-Regular.ttf"
                 resp = httpx.get(url, timeout=15)
                 if resp.status_code == 200:
                     with open(temp_font, "wb") as f:
@@ -112,19 +112,6 @@ class ImageGenerator:
             }
         }
 
-    # Curated high-quality tech/gaming backgrounds to use when other image APIs fail
-    CURATED_BACKGROUNDS = [
-        "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1280&fit=crop&q=80",  # Gaming setup neon
-        "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1280&fit=crop&q=80",  # Gaming controller
-        "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1280&fit=crop&q=80",  # Microchip tech
-        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1280&fit=crop&q=80",  # Abstract cyber tech
-        "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=1280&fit=crop&q=80",  # Matrix coding
-        "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1280&fit=crop&q=80",  # Cybersecurity tech
-        "https://images.unsplash.com/photo-1563089145-599997674d42?w=1280&fit=crop&q=80",  # Abstract neon synthwave
-        "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=1280&fit=crop&q=80",  # Developer code
-        "https://images.unsplash.com/photo-1538481199705-c710c4e965fc?w=1280&fit=crop&q=80",  # Gaming room neon
-        "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=1280&fit=crop&q=80",  # Abstract dark tech
-    ]
 
     async def generate_hf_background(self, keywords: str, vertical: bool = False) -> Path:
         """Generates background using Hugging Face Serverless Inference API"""
@@ -160,60 +147,6 @@ class ImageGenerator:
                     logger.warning(f"Hugging Face API failed: {resp.status_code} {resp.text}")
         except Exception as e:
             logger.error(f"Error calling Hugging Face API: {e}")
-        return None
-
-    async def generate_horde_background(self, keywords: str, vertical: bool = False) -> Path:
-        """Generates background using AI Horde"""
-        img_path = self.temp_dir / ("bg_horde_v.jpg" if vertical else "bg_horde.jpg")
-        width, height = (512, 768) if vertical else (512, 512)
-        
-        clean_keywords = keywords.replace(",", " ")
-        prompt = (
-            f"dark high-contrast techno-gaming background of {clean_keywords}, cyberpunk hacker style, "
-            "glowing neon cyan and hot red circuit lines, digital grid overlay, futuristic HUD reticle "
-            "in upper half, clean dark bottom region, deep shadows, cinematic lighting, highly detailed "
-            "### text, words, letters, logo, signature, watermark, bright background, white background, "
-            "daylight, out of focus, crowded bottom, blurry"
-        )
-        
-        url = "https://aihorde.net/api/v2/generate/async"
-        headers = {
-            "apikey": "0000000000",
-            "Client-Agent": "SMM-Bot:1.0:production"
-        }
-        payload = {
-            "prompt": prompt,
-            "params": {"n": 1, "width": width, "height": height, "steps": 15, "cfg_scale": 7.0}
-        }
-        
-        logger.info(f"Generating AI cover using AI Horde: {prompt[:60]}...")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json=payload, headers=headers, timeout=15)
-                if resp.status_code != 202:
-                    return None
-                
-                job_id = resp.json().get("id")
-                if not job_id: return None
-                    
-                import asyncio
-                for i in range(15):
-                    await asyncio.sleep(3)
-                    check_resp = await client.get(f"https://aihorde.net/api/v2/generate/check/{job_id}", timeout=10)
-                    if check_resp.status_code == 200 and check_resp.json().get("done"):
-                        status_resp = await client.get(f"https://aihorde.net/api/v2/generate/status/{job_id}", timeout=10)
-                        if status_resp.status_code == 200:
-                            gens = status_resp.json().get("generations", [])
-                            if gens:
-                                img_resp = await client.get(gens[0].get("img"), timeout=15)
-                                if img_resp.status_code == 200:
-                                    with open(img_path, "wb") as f:
-                                        f.write(img_resp.content)
-                                    return img_path
-                    elif check_resp.status_code != 200:
-                        break
-        except Exception as e:
-            logger.error(f"Error calling AI Horde: {e}")
         return None
 
     async def generate_pollinations_background(self, keywords: str, vertical: bool = False) -> Path:
@@ -299,7 +232,8 @@ class ImageGenerator:
 
     async def generate_ai_background(self, keywords: str = "technology,gaming", vertical: bool = False) -> Path:
         """Routes between AI image providers with graceful fallback chain:
-        HuggingFace → Pollinations.ai → Cloudflare Workers AI → AI Horde"""
+        HuggingFace → Pollinations.ai → Cloudflare Workers AI.
+        Falls back to procedural gradient if all generators fail."""
         # 1. Try HuggingFace (requires API key)
         hf_path = await self.generate_hf_background(keywords, vertical)
         if hf_path:
@@ -317,57 +251,15 @@ class ImageGenerator:
         if cf_path:
             return cf_path
         
-        # 4. Try AI Horde (free, anonymous, slow)
-        logger.info("Falling back to AI Horde for image generation...")
-        return await self.generate_horde_background(keywords, vertical)
- 
-    async def fetch_background(self, keywords: str = "technology,computer", vertical: bool = False) -> Path:
-        """Downloads a relevant background image from LoremFlickr or falls back to Unsplash curated list"""
-        img_path = self.temp_dir / ("bg_download_v.jpg" if vertical else "bg_download.jpg")
-        width, height = (720, 1280) if vertical else (1280, 720)
-        
-        # 1. Try to download from LoremFlickr using cache buster and topic tags
-        import random
-        random_lock = random.randint(1, 100000)
-        
-        # Use first 2 keywords for a more specific tag search on LoremFlickr
-        kw_list = [k.strip().replace(" ", "") for k in keywords.split(",") if k.strip()]
-        search_tags = kw_list[:2] if kw_list else ["technology", "gaming"]
-        clean_keywords = ",".join(search_tags)
-        
-        # We query with /all (AND) first, fallback to /any if unsuccessful
-        for search_mode in ["all", "any"]:
-            url = f"https://loremflickr.com/{width}/{height}/{clean_keywords}/{search_mode}?lock={random_lock}"
-            try:
-                logger.info(f"Attempting to download background from LoremFlickr ({search_mode}): {url}")
-                async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, timeout=12, follow_redirects=True)
-                    if resp.status_code == 200:
-                        # Check if it returned a placeholder/cat image or an actual image
-                        # If size is small or if we got redirected to some cat picture, we still accept it as last resort,
-                        # but if it fails we fall back to curated.
-                        with open(img_path, "wb") as f:
-                            f.write(resp.content)
-                        logger.info("Successfully downloaded background from LoremFlickr.")
-                        return img_path
-            except Exception as e:
-                logger.warning(f"LoremFlickr download failed with mode {search_mode}: {e}")
-                
-        # 2. Final Fallback: Select a random high-quality curated background
-        fallback_url = random.choice(self.CURATED_BACKGROUNDS)
-        logger.info(f"Falling back to high-quality curated tech background: {fallback_url}")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(fallback_url, timeout=15, follow_redirects=True)
-                if resp.status_code == 200:
-                    with open(img_path, "wb") as f:
-                        f.write(resp.content)
-                    logger.info("Successfully downloaded curated fallback background.")
-                    return img_path
-        except Exception as e:
-            logger.error(f"Failed to download curated background fallback: {e}")
-            
-        return None
+        # 4. Fallback to procedural gradient
+        logger.info("All AI generators failed. Generating procedural gradient fallback...")
+        width, height = (720, 1280) if vertical else (1080, 1080)
+        colors = self.theme.get("colors", {})
+        img = self._generate_procedural_background(width, height, colors)
+        fallback_path = self.temp_dir / ("procedural_fallback_v.jpg" if vertical else "procedural_fallback.jpg")
+        final_img = img.convert("RGB")
+        final_img.save(fallback_path, "JPEG", quality=95)
+        return fallback_path
 
     async def download_image(self, url: str) -> Optional[Path]:
         """Downloads a specific image URL to use as cover background"""
@@ -452,65 +344,7 @@ class ImageGenerator:
             draw_x = x - text_w if align == "right" else x
             draw.text((draw_x, y - 5), text, font=coord_font, fill=(255, 255, 255, 45))
 
-        # 1. Concentric HUD scanning reticle (placed in upper-middle area)
-        cx, cy = width // 2, int(height * 0.38)
-        
-        # Draw central reticle circle layers
-        draw.ellipse([cx - 130, cy - 130, cx + 130, cy + 130], outline=(brand_accent[0], brand_accent[1], brand_accent[2], 30), width=1)
-        draw.ellipse([cx - 135, cy - 135, cx + 135, cy + 135], outline=(255, 255, 255, 20), width=1)
-        draw.ellipse([cx - 40, cy - 40, cx + 40, cy + 40], outline=(brand_accent[0], brand_accent[1], brand_accent[2], 30), width=1)
-        
-        # Tick marks on the outer ring (8 directions)
-        for angle in [0, 45, 90, 135, 180, 225, 270, 315]:
-            rad = math.radians(angle)
-            x1 = cx + int(135 * math.cos(rad))
-            y1 = cy + int(135 * math.sin(rad))
-            x2 = cx + int(145 * math.cos(rad))
-            y2 = cy + int(145 * math.sin(rad))
-            draw.line([(x1, y1), (x2, y2)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 30), width=1)
-            
-        # Draw small crosshair lines in the very center
-        draw.line([(cx - 25, cy), (cx - 8, cy)], fill=(255, 255, 255, 20), width=1)
-        draw.line([(cx + 8, cy), (cx + 25, cy)], fill=(255, 255, 255, 20), width=1)
-        draw.line([(cx, cy - 25), (cx, cy - 8)], fill=(255, 255, 255, 20), width=1)
-        draw.line([(cx, cy + 8), (cx, cy + 25)], fill=(255, 255, 255, 20), width=1)
-        
-        # 2. Premium Coordinate Grid Overlay (drawn on any background)
         offset = 24
-        grid_spacing = 80
-        grid_min_x = offset + 40
-        grid_max_x = width - offset - 40
-        grid_min_y = offset + 40
-        grid_max_y = height - offset - 40
-        
-        # Faint line opacities
-        grid_white = (255, 255, 255, 8)
-        grid_accent = (brand_accent[0], brand_accent[1], brand_accent[2], 12)
-        
-        # Draw grid lines and coordinate labels
-        for x in range(grid_min_x, grid_max_x, grid_spacing):
-            # Vertical lines
-            draw.line([(x, grid_min_y), (x, grid_max_y)], fill=grid_white, width=1)
-            # Label at top axis
-            label_x = f"X_{x:03d}"
-            draw.text((x - 12, offset + 26), label_x, font=coord_font, fill=(255, 255, 255, 30))
-            
-        for y in range(grid_min_y, grid_max_y, grid_spacing):
-            # Horizontal lines
-            draw.line([(grid_min_x, y), (grid_max_x, y)], fill=grid_white, width=1)
-            # Label at left axis
-            label_y = f"Y_{y:03d}"
-            draw.text((offset + 26, y - 5), label_y, font=coord_font, fill=(255, 255, 255, 30))
-            
-        # Draw small intersection crosses (plus signs "+") outside central reticle
-        cross_size = 3
-        for x in range(grid_min_x, grid_max_x, grid_spacing):
-            for y in range(grid_min_y, grid_max_y, grid_spacing):
-                dist_to_center = math.sqrt((x - cx)**2 + (y - cy)**2)
-                # Keep the center and the bottom text area (headline) clean
-                if dist_to_center > 160 and y < height - 260:
-                    draw.line([(x - cross_size, y), (x + cross_size, y)], fill=grid_accent, width=1)
-                    draw.line([(x, y - cross_size), (x, y + cross_size)], fill=grid_accent, width=1)
 
         # 3. Dynamic & Aspect-Ratio Aware Sci-Fi Circuit Paths
         circuit_y1 = int(height * 0.15)
@@ -758,20 +592,45 @@ class ImageGenerator:
             
             # Position text at the bottom
             total_text_height = len(wrapped_lines) * (font_size + 10)
-            y_start = height - total_text_height - 80
+            y_start_initial = height - total_text_height - 80
+            y_start_final = height - 80
             
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
-            shadow_color = (0, 0, 0, 200)
-            glow_color = (brand_accent[0], brand_accent[1], brand_accent[2], 80) # Semi-transparent accent glow
+            brand_dark = self._parse_color(colors.get("brand_dark"), [13, 15, 20, 255])
             
+            # Card bounds
+            card_x1 = 24 if vertical else (pad_left - 30)
+            card_x2 = width - pad_left + 30
+            card_y1 = y_start_initial - 20
+            card_y2 = y_start_final + 20
+            
+            # Fill the card with a semi-transparent dark color
+            card_fill = (brand_dark[0], brand_dark[1], brand_dark[2], 200)
+            # Draw a thin border of accent color
+            card_outline = (brand_accent[0], brand_accent[1], brand_accent[2], 120)
+            
+            # Draw polygon for Cyberpunk 2077 cut look (cut top-left by 15px)
+            polygon_pts = [
+                (card_x1 + 15, card_y1),
+                (card_x2, card_y1),
+                (card_x2, card_y2),
+                (card_x1, card_y2),
+                (card_x1, card_y1 + 15)
+            ]
+            draw.polygon(polygon_pts, fill=card_fill, outline=card_outline, width=1)
+            
+            # Vertical neon indicator bar of the accent color to the left of the text block
+            indicator_x = card_x1 + 8
+            indicator_y1 = card_y1 + 20
+            indicator_y2 = card_y2 - 10
+            # Glow line: width 6
+            draw.line([(indicator_x, indicator_y1), (indicator_x, indicator_y2)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 60), width=6)
+            # Core line: width 2
+            draw.line([(indicator_x, indicator_y1), (indicator_x, indicator_y2)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 255), width=2)
+            
+            # Render the headline text lines left-aligned on the card using the Russo One font
+            y_start = y_start_initial
             for line in wrapped_lines:
-                # Simple clean text with a soft shadow for readability (no messy glow)
-                draw.text(
-                    (pad_left + 3, y_start + 3),
-                    line,
-                    font=font,
-                    fill=shadow_color
-                )
                 draw.text(
                     (pad_left, y_start),
                     line,
@@ -779,93 +638,6 @@ class ImageGenerator:
                     fill=text_color
                 )
                 y_start += font_size + 10
-
-            # 6. Render Branded Watermark in Bottom-Right Corner (R1)
-            if wm_config:
-                wm_font_size = wm_config.get("font_size", 24)
-                if self.font_path and self.font_path.exists():
-                    wm_font = ImageFont.truetype(str(self.font_path), wm_font_size)
-                else:
-                    try:
-                        wm_font = ImageFont.load_default(size=wm_font_size)
-                    except TypeError:
-                        wm_font = ImageFont.load_default()
-
-                text_parts = wm_config.get("text_parts", [])
-                
-                # Calculate widths of text segments
-                part_widths = []
-                for part in text_parts:
-                    txt = part.get("text", "")
-                    try:
-                        w = wm_font.getlength(txt)
-                    except AttributeError:
-                        w = len(txt) * (wm_font_size * 0.5)
-                    part_widths.append(w)
-                
-                total_wm_width = sum(part_widths)
-                try:
-                    ascent, descent = wm_font.getmetrics()
-                    wm_height = ascent + descent
-                except (AttributeError, TypeError):
-                    wm_height = wm_font_size
-
-                # Align with bottom-right boundaries (inner border offset = 24)
-                x_end = width - offset - 16
-                y_end = height - offset - 16
-                
-                wm_x_start = x_end - total_wm_width
-                wm_y_start = y_end - wm_height
-                
-                # Retrieve theme-configured colors
-                watermark_text_color = tuple(self._parse_color(colors.get("watermark_text", colors.get("text_primary")), [255, 255, 255, 255]))
-                watermark_accent_color = tuple(self._parse_color(colors.get("watermark_accent", colors.get("brand_accent")), [217, 4, 41, 255]))
-                brand_dark = self._parse_color(colors.get("brand_dark"), [13, 15, 20, 255])
-                brand_accent = self._parse_color(colors.get("brand_accent"), [217, 4, 41, 255])
-                
-                # Draw semi-transparent backing box for perfect readability
-                pad_x = 12
-                pad_y = 6
-                back_x1 = wm_x_start - pad_x
-                back_y1 = wm_y_start - pad_y
-                back_x2 = x_end + pad_x
-                back_y2 = y_end + pad_y
-                
-                backing_fill = tuple(brand_dark[:3] + [180])  # ~70% opacity
-                backing_outline = tuple(brand_accent[:3] + [80])   # low opacity accent border
-                
-                try:
-                    draw.rounded_rectangle(
-                        [back_x1, back_y1, back_x2, back_y2],
-                        radius=6,
-                        fill=backing_fill,
-                        outline=backing_outline,
-                        width=1
-                    )
-                except AttributeError:
-                    draw.rectangle(
-                        [back_x1, back_y1, back_x2, back_y2],
-                        fill=backing_fill,
-                        outline=backing_outline,
-                        width=1
-                    )
-                
-                # Render the text segments
-                current_x = wm_x_start
-                for idx, part in enumerate(text_parts):
-                    txt = part.get("text", "")
-                    color_type = part.get("color_type", "primary")
-                    part_color = watermark_text_color if color_type == "primary" else watermark_accent_color
-                    
-                    draw.text(
-                        (current_x, wm_y_start),
-                        txt,
-                        font=wm_font,
-                        fill=tuple(part_color),
-                        stroke_width=1,
-                        stroke_fill=tuple(brand_dark[:3] + [255])
-                    )
-                    current_x += part_widths[idx]
             
             # Save as JPEG
             final_img = img.convert("RGB")

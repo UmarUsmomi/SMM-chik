@@ -419,6 +419,7 @@ Keywords:"""
             
             bg_path = None
             image_url = None
+            is_original_image = False
             
             # 1. Try to extract image URL from raw_data
             if raw_data:
@@ -439,25 +440,31 @@ Keywords:"""
             # 3. Try downloading the extracted news image
             if image_url:
                 bg_path = await img_gen.download_image(image_url)
-                
-            # 4. Fallback to AI generation or stock download if no news image was found/downloaded
+                if bg_path and bg_path.exists():
+                    is_original_image = True
+                    
+            # 4. Fallback to AI generation if no news image was found/downloaded
             if not bg_path:
                 logger.info("No news image available or download failed. Falling back to AI generator...")
                 keywords = await self._generate_visual_prompt(title, text)
                 bg_path = await img_gen.generate_ai_background(keywords)
                 if not bg_path:
                     logger.info("AI background generation failed. Falling back to stock image download...")
-                    bg_path = await img_gen.fetch_background(keywords)
+                    bg_path = await img_gen.generate_ai_background(keywords)
                     
             # 5. Render final cover using the background
-            cover_path = img_gen.create_cover(title, bg_path)
+            if is_original_image:
+                cover_path = bg_path
+            else:
+                cover_path = img_gen.create_cover(title, bg_path)
             
             if cover_path and cover_path.exists():
                 success = await self.publish_photo(title, text, str(cover_path))
                 # Delete temporary cover path to save space
                 try:
-                    cover_path.unlink()
-                    if bg_path and bg_path.exists():
+                    if cover_path and cover_path.exists():
+                        cover_path.unlink()
+                    if bg_path and bg_path.exists() and bg_path != cover_path:
                         bg_path.unlink()
                 except Exception as e:
                     logger.warning(f"Failed to delete temp cover files: {e}")

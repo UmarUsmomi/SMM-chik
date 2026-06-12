@@ -1,6 +1,6 @@
 import pytest
 import html
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch, AsyncMock, ANY
 from smm_engine.publishers.telegram_pub import TelegramPublisher
 from smm_engine.scrapers import run_all_scrapers
 from smm_engine.scrapers.base import BaseScraper, NewsItem
@@ -170,17 +170,36 @@ async def test_ai_background_routing():
     
     gen = ImageGenerator()
     
-    # Test that it falls back to Horde if HF fails
-    with patch.object(gen, "generate_hf_background", return_value=None), \
-         patch.object(gen, "generate_horde_background", return_value="fake_horde_path"):
-        res = await gen.generate_ai_background("test")
-        assert res == "fake_horde_path"
-        
-    # Test that it returns HF if successful
+    # 1. HuggingFace succeeds -> returns HF path
     with patch.object(gen, "generate_hf_background", return_value="fake_hf_path"), \
-         patch.object(gen, "generate_horde_background", return_value="fake_horde_path"):
+         patch.object(gen, "generate_pollinations_background", return_value="fake_poll_path"), \
+         patch.object(gen, "generate_cloudflare_background", return_value="fake_cf_path"):
         res = await gen.generate_ai_background("test")
         assert res == "fake_hf_path"
+        
+    # 2. HF fails, Pollinations succeeds -> returns Pollinations path
+    with patch.object(gen, "generate_hf_background", return_value=None), \
+         patch.object(gen, "generate_pollinations_background", return_value="fake_poll_path"), \
+         patch.object(gen, "generate_cloudflare_background", return_value="fake_cf_path"):
+        res = await gen.generate_ai_background("test")
+        assert res == "fake_poll_path"
+
+    # 3. HF & Pollinations fail, Cloudflare succeeds -> returns Cloudflare path
+    with patch.object(gen, "generate_hf_background", return_value=None), \
+         patch.object(gen, "generate_pollinations_background", return_value=None), \
+         patch.object(gen, "generate_cloudflare_background", return_value="fake_cf_path"):
+        res = await gen.generate_ai_background("test")
+        assert res == "fake_cf_path"
+
+    # 4. All three fail -> returns procedural fallback path
+    from PIL import Image
+    fake_img = Image.new("RGBA", (10, 10))
+    with patch.object(gen, "generate_hf_background", return_value=None), \
+         patch.object(gen, "generate_pollinations_background", return_value=None), \
+         patch.object(gen, "generate_cloudflare_background", return_value=None), \
+         patch.object(gen, "_generate_procedural_background", return_value=fake_img):
+        res = await gen.generate_ai_background("test")
+        assert "procedural_fallback" in str(res)
 
 # 7. Test Visual Prompt generation in TelegramPublisher
 @pytest.mark.asyncio
@@ -381,29 +400,194 @@ def test_telegram_publisher_double_unescaping():
     assert "<blockquote expandable>" in res
     assert "&amp;" not in res
 
-# 14. Test LoremFlickr URL Format with /any OR Search
-@pytest.mark.anyio
-async def test_loremflickr_url_format():
+# 14. Test Publish Original Image Bypass logic (R3)
+@pytest.mark.asyncio
+async def test_telegram_publisher_original_image_bypass():
+    from smm_engine.publishers.telegram_pub import TelegramPublisher
     from smm_engine.media.image_handler import ImageGenerator
-    import httpx
+    from pathlib import Path
     
-    img_gen = ImageGenerator()
-    original_get = httpx.AsyncClient.get
+    pub = TelegramPublisher()
+    pub.enabled = True
+    pub.bot_token = "dummy_token"
+    pub.channel_id = "dummy_channel"
     
-    requested_urls = []
-    async def mock_get(self, url, *args, **kwargs):
-        requested_urls.append(str(url))
-        mock_resp = httpx.Response(200, content=b"fake_image_data")
-        mock_resp.request = httpx.Request("GET", url)
-        return mock_resp
+    # Mock download_image to return a path that exists
+    mock_path = MagicMock(spec=Path)
+    mock_path.exists.return_value = True
+    
+    with patch.object(ImageGenerator, "download_image", return_value=mock_path) as mock_download, \
+         patch.object(ImageGenerator, "create_cover") as mock_create_cover, \
+         patch.object(pub, "publish_photo", return_value=True) as mock_publish_photo:
+         
+        raw_data = {"cover_image": "http://example.com/image.jpg"}
+        res = await pub.publish_post_with_cover("Test Title", "Test Text", raw_data=raw_data)
         
-    httpx.AsyncClient.get = mock_get
-    try:
-        await img_gen.fetch_background("artificial intelligence, glowing brain")
-    finally:
-        httpx.AsyncClient.get = original_get
+        assert res is True
+        mock_download.assert_called_once_with("http://example.com/image.jpg")
+        # create_cover should be bypassed entirely
+        mock_create_cover.assert_not_called()
+        # publish_photo should be called with mock_path
+        mock_publish_photo.assert_called_once_with("Test Title", "Test Text", str(mock_path))
+        # Ensure it unlinks the path
+        mock_path.unlink.assert_called_once()
+
+    # Test fallback to AI background generation when download fails
+    mock_ai_path = MagicMock(spec=Path)
+    mock_ai_path.exists.return_value = True
+    mock_cover_path = MagicMock(spec=Path)
+    mock_cover_path.exists.return_value = True
+
+    with patch.object(ImageGenerator, "download_image", return_value=None) as mock_download, \
+         patch.object(ImageGenerator, "generate_ai_background", return_value=mock_ai_path) as mock_gen_ai, \
+         patch.object(ImageGenerator, "create_cover", return_value=mock_cover_path) as mock_create_cover, \
+         patch.object(pub, "publish_photo", return_value=True) as mock_publish_photo, \
+         patch.object(pub, "_generate_visual_prompt", return_value="visual prompt"):
+         
+        raw_data = {"cover_image": "http://example.com/image.jpg"}
+        res = await pub.publish_post_with_cover("Test Title", "Test Text", raw_data=raw_data)
         
-    assert len(requested_urls) > 0
-    url = requested_urls[0]
-    assert "/all" in url or "/any" in url
-    assert "artificial" in url
+        assert res is True
+        mock_download.assert_called_once_with("http://example.com/image.jpg")
+        mock_gen_ai.assert_called_with("visual prompt")
+        # create_cover should be called since is_original_image is False
+        mock_create_cover.assert_called_once_with("Test Title", mock_ai_path)
+        # publish_photo should be called with mock_cover_path
+        mock_publish_photo.assert_called_once_with("Test Title", "Test Text", str(mock_cover_path))
+        # Ensure both cover and bg are deleted
+        mock_cover_path.unlink.assert_called_once()
+        mock_ai_path.unlink.assert_called_once()
+
+
+# 15. Test Selective Blockquote Logic (R6)
+@pytest.mark.asyncio
+async def test_selective_blockquote():
+    from smm_engine.content.adapter import ContentAdapter
+    from smm_engine.scrapers.base import NewsItem
+    import random
+    
+    adapter = ContentAdapter()
+    
+    # Mock generate_content_with_retry so it doesn't call actual Gemini API
+    with patch("smm_engine.content.adapter.generate_content_with_retry", new_callable=AsyncMock) as mock_generate, \
+         patch("smm_engine.content.adapter.parse_json_robust") as mock_parse:
+        
+        mock_generate.return_value = "{}"
+        mock_parse.return_value = {"title": "Test Title", "body": "Test Body"}
+        
+        # Scenario 1: Short content (< 800 chars)
+        short_content = "This is a short news content."
+        item_short = NewsItem(
+            source="test_source",
+            source_id="1",
+            title="Short Title",
+            url="http://example.com/short",
+            raw_data={"content": short_content}
+        )
+        
+        # Should always prohibit blockquotes
+        await adapter._adapt_pass(item_short)
+        
+        prompt_short = mock_generate.call_args[0][0]
+        assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" in prompt_short
+        assert "Если в новости есть яркая прямая цитата" not in prompt_short
+
+        # Scenario 2: Long content (> 800 chars) with random < 0.60
+        long_content = "A" * 850
+        item_long = NewsItem(
+            source="test_source",
+            source_id="2",
+            title="Long Title",
+            url="http://example.com/long",
+            raw_data={"content": long_content}
+        )
+        
+        mock_generate.reset_mock()
+        with patch("random.random", return_value=0.50):
+            await adapter._adapt_pass(item_long)
+            
+        prompt_long_allowed = mock_generate.call_args[0][0]
+        assert "Если в новости есть яркая прямая цитата" in prompt_long_allowed
+        assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" not in prompt_long_allowed
+
+        # Scenario 3: Long content (> 800 chars) with random >= 0.60
+        mock_generate.reset_mock()
+        with patch("random.random", return_value=0.70):
+            await adapter._adapt_pass(item_long)
+            
+        prompt_long_forbidden = mock_generate.call_args[0][0]
+        assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" in prompt_long_forbidden
+        assert "Если в новости есть яркая прямая цитата" not in prompt_long_forbidden
+
+
+# 16. Test Scheduler Loop Timing (R7)
+@pytest.mark.asyncio
+async def test_scheduler_loop_timing():
+    from bot.app import scheduler_loop
+    from datetime import datetime, timezone
+    import asyncio
+    
+    mock_get_setting = MagicMock()
+    mock_set_setting = MagicMock()
+    mock_run_pipeline = AsyncMock()
+    mock_sleep = AsyncMock()
+    
+    sleep_count = 0
+    def side_effect_sleep(secs):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > 3: # prevent infinite loop
+            raise asyncio.CancelledError()
+        return None
+    
+    mock_sleep.side_effect = side_effect_sleep
+    
+    interval_seconds = 10800
+    
+    # Scenario A: first run, no last run in DB
+    db_state = {}
+    mock_get_setting.side_effect = lambda key: db_state.get(key)
+    mock_set_setting.side_effect = lambda key, val: db_state.update({key: val})
+    
+    with patch("bot.app.db.get_setting", mock_get_setting), \
+         patch("bot.app.db.set_setting", mock_set_setting), \
+         patch("bot.app.run_pipeline_task", mock_run_pipeline), \
+         patch("asyncio.sleep", mock_sleep), \
+         patch("os.getenv", return_value="3.0"):
+         
+        try:
+            await scheduler_loop()
+        except asyncio.CancelledError:
+            pass
+            
+        assert mock_sleep.call_args_list[0][0][0] == 30
+        mock_set_setting.assert_any_call("last_pipeline_run", ANY)
+        mock_run_pipeline.assert_called_once()
+        assert mock_sleep.call_args_list[1][0][0] == interval_seconds
+
+    # Scenario B: elapsed time is less than interval
+    last_run_time = datetime.now(timezone.utc).timestamp() - 3600
+    last_run_iso = datetime.fromtimestamp(last_run_time, tz=timezone.utc).isoformat()
+    
+    mock_get_setting = MagicMock(return_value=last_run_iso)
+    mock_set_setting = MagicMock()
+    mock_run_pipeline = AsyncMock()
+    mock_sleep = AsyncMock()
+    sleep_count = 0
+    mock_sleep.side_effect = side_effect_sleep
+    
+    with patch("bot.app.db.get_setting", mock_get_setting), \
+         patch("bot.app.db.set_setting", mock_set_setting), \
+         patch("bot.app.run_pipeline_task", mock_run_pipeline), \
+         patch("asyncio.sleep", mock_sleep), \
+         patch("os.getenv", return_value="3.0"):
+         
+        try:
+            await scheduler_loop()
+        except asyncio.CancelledError:
+            pass
+            
+        assert mock_sleep.call_args_list[0][0][0] == 30
+        remaining_sleep = mock_sleep.call_args_list[1][0][0]
+        assert abs(remaining_sleep - 7200) < 5
+        mock_run_pipeline.assert_not_called()

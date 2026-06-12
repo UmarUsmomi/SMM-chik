@@ -40,7 +40,7 @@ class VideoGenerator:
                 bg_keywords = slide.get("background_keywords", "technology")
                 
                 # Fetch background
-                bg_path = await self.image_gen.fetch_background(bg_keywords, vertical=True)
+                bg_path = await self.image_gen.generate_ai_background(bg_keywords, vertical=True)
                 
                 # Create vertical slide frame
                 slide_img = self.image_gen.create_cover(caption, bg_path=bg_path, vertical=True)

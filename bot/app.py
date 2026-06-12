@@ -45,6 +45,8 @@ logger = logging.getLogger("telegram_bot")
 async def scheduler_loop():
     """Background task to run pipeline automatically at regular intervals."""
     import os
+    from datetime import datetime, timezone
+    
     interval_hours = float(os.getenv("PARSING_INTERVAL_HOURS", "3.0"))
     interval_seconds = int(interval_hours * 3600)
     
@@ -55,7 +57,23 @@ async def scheduler_loop():
     
     while True:
         try:
+            last_run_str = db.get_setting("last_pipeline_run")
+            if last_run_str:
+                try:
+                    last_run = datetime.fromisoformat(last_run_str)
+                    if last_run.tzinfo is None:
+                        last_run = last_run.replace(tzinfo=timezone.utc)
+                    elapsed = (datetime.now(timezone.utc) - last_run).total_seconds()
+                    if elapsed < interval_seconds:
+                        remaining = int(interval_seconds - elapsed)
+                        logger.info(f"Scheduler: Pipeline ran recently ({elapsed:.1f}s ago). Sleeping remaining {remaining} seconds.")
+                        await asyncio.sleep(remaining)
+                        continue
+                except Exception as ex:
+                    logger.error(f"Scheduler: Error parsing last run timestamp: {ex}")
+            
             logger.info("Scheduler: Triggering auto-pipeline run...")
+            db.set_setting("last_pipeline_run", datetime.now(timezone.utc).isoformat())
             await run_pipeline_task()
         except Exception as e:
             logger.error(f"Scheduler: Error during pipeline execution: {e}")

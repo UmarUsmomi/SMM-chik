@@ -6,6 +6,7 @@ import google.generativeai as genai
 from smm_engine.config import GEMINI_API_KEY, STYLE_GUIDE, ADAPTER_MODEL
 from smm_engine.scrapers.base import NewsItem
 from smm_engine.content.humanizer import TextHumanizer
+from smm_engine.utils.gemini_helper import generate_content_with_retry, parse_json_robust
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,16 @@ class ContentAdapter:
         formatting = STYLE_GUIDE.get("formatting", {})
         max_length = formatting.get("max_length", 400)
         
+        content_str = item.raw_data.get("content") or item.raw_data.get("description") or item.raw_data.get("summary") or ""
+        is_long = len(content_str) > 800
+        import random
+        allow_blockquote = is_long and (random.random() < 0.60)
+        
+        if allow_blockquote:
+            blockquote_instruction = "- Если в новости есть яркая прямая цитата эксперта или разработчика, оформи её тегом <blockquote expandable>текст цитаты</blockquote>. Используй цитаты только при наличии реальной цитаты в источнике, не придумывай их!"
+        else:
+            blockquote_instruction = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote> или <blockquote expandable> в этом посте. Все цитаты должны быть перефразированы простым текстом."
+            
         prompt = f"""
 Ты — ведущий копирайтер Telegram-канала "НейроСофт Гейминг".
 Целевая аудитория: {audience}
@@ -88,7 +99,7 @@ class ContentAdapter:
 СТРОГИЕ ПРАВИЛА:
 {style_rules_str}
 - Длина всего поста: СТРОГО до {max_length} символов! Пиши максимально емко.
-- Если в новости есть яркая прямая цитата эксперта или разработчика, оформи её тегом <blockquote expandable>текст цитаты</blockquote>. Используй цитаты только при наличии реальной цитаты в источнике, не придумывай их!
+{blockquote_instruction}
 - Пост должен оканчиваться логически завершенным предложением, без обрезки на полуслове.
 - НЕ используй хэштеги — они запрещены.
 - В списках КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать символ `*` для маркеров! Только эмодзи!
@@ -105,7 +116,6 @@ class ContentAdapter:
 }}
 """
         try:
-            from smm_engine.utils.gemini_helper import generate_content_with_retry, parse_json_robust
             response_text = await generate_content_with_retry(
                 prompt,
                 initial_model=self.model_name,
