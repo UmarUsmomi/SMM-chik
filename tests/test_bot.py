@@ -230,3 +230,71 @@ def test_webhook_security_token():
         assert resp.status_code == 200
 
 
+def test_api_moderate_trash():
+    import bot.app
+    item_id = bot.app.db.save_news_item("test", "777", "Api Trash Title", "https://api-trash.com", {})
+    bot.app.db.save_adapted_content(item_id, "Adapted Title", "Adapted Text", status='pending_review')
+    
+    resp = client.post(f"/api/moderate/{item_id}", json={"action": "trash"})
+    assert resp.status_code == 200
+    assert resp.json()["action"] == "trash"
+    
+    # Verify in DB
+    item = bot.app.db.get_by_id(item_id)
+    assert item["status"] == "trash"
+
+
+def test_webhook_trash_callback():
+    import bot.app
+    item_id = bot.app.db.save_news_item("test", "666", "Webhook Trash Title", "https://web-trash.com", {})
+    bot.app.db.save_adapted_content(item_id, "Adapted Title", "Adapted Text", status='pending_review')
+    
+    payload = {
+        "update_id": 1004,
+        "callback_query": {
+            "id": "cb_2",
+            "message": {
+                "message_id": 101,
+                "chat": {"id": 12345, "type": "private"},
+                "text": "Some text"
+            },
+            "data": f"trash_{item_id}"
+        }
+    }
+    
+    with patch("bot.app.answer_callback_query", new_callable=AsyncMock) as mock_answer, \
+         patch("bot.app.edit_message_text", new_callable=AsyncMock) as mock_edit:
+         
+        resp = client.post("/webhook", json=payload)
+        assert resp.status_code == 200
+        mock_answer.assert_called_once()
+        mock_edit.assert_called_once()
+        assert "В мусоре" in mock_edit.call_args[0][2]
+        
+    item = bot.app.db.get_by_id(item_id)
+    assert item["status"] == "trash"
+
+
+def test_auto_register_admin_chat_id():
+    import bot.app
+    # Reset admin_chat_id in settings first
+    bot.app.db.set_setting("admin_chat_id", "")
+    
+    payload = {
+        "update_id": 1005,
+        "message": {
+            "message_id": 5,
+            "chat": {"id": 998877, "type": "private"},
+            "text": "/start"
+        }
+    }
+    
+    with patch("bot.app.send_bot_message", new_callable=AsyncMock):
+        resp = client.post("/webhook", json=payload)
+        assert resp.status_code == 200
+        
+    admin_chat = bot.app.db.get_setting("admin_chat_id")
+    assert admin_chat == "998877"
+
+
+

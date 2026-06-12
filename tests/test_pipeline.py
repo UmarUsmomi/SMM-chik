@@ -71,3 +71,70 @@ async def test_smm_pipeline_run():
         assert queue_items[0]["title"] == "HackerNews Test Title"
         assert queue_items[0]["score"] == 95
         assert queue_items[0]["adapted_title"] == "Хайповый Заголовок"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_moderation_flow():
+    # Setup news items: one 95 (auto-publish), one 80 (moderation queue)
+    mock_scraped = [
+        NewsItem(source="hackernews", source_id="hn_95", title="HackerNews 95 Score", url="https://hn.com/95"),
+        NewsItem(source="devto", source_id="dev_80", title="Devto 80 Score", url="https://dev.to/80")
+    ]
+    
+    mock_adapted_res = {
+        "title": "Хайповый Заголовок",
+        "text": "Это адаптированный текст поста."
+    }
+
+    with patch("smm_engine.pipeline.run_all_scrapers", new_callable=AsyncMock) as mock_run_scrapers, \
+         patch("smm_engine.pipeline.NewsScorer") as mock_scorer_class, \
+         patch("smm_engine.pipeline.ContentAdapter") as mock_adapter_class, \
+         patch("smm_engine.pipeline.TelegramPublisher") as mock_publisher_class, \
+         patch("smm_engine.config.TELEGRAM_BOT_TOKEN", "mock_bot_token"), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_httpx_post:
+         
+        mock_run_scrapers.return_value = mock_scraped
+        
+        mock_scorer_inst = MagicMock()
+        mock_scorer_inst.score_item = AsyncMock(side_effect=lambda item: {
+            "total": 95 if item.source == "hackernews" else 80,
+            "reason": "Test reason"
+        })
+        mock_scorer_class.return_value = mock_scorer_inst
+        
+        mock_adapter_inst = MagicMock()
+        mock_adapter_inst.adapt_news = AsyncMock(return_value=mock_adapted_res)
+        mock_adapter_class.return_value = mock_adapter_inst
+        
+        mock_publisher_inst = MagicMock()
+        mock_publisher_inst.publish_post_with_cover = AsyncMock(return_value=True)
+        mock_publisher_inst._escape_html = MagicMock(side_effect=lambda x: str(x) if x else "")
+        mock_publisher_inst._format_markdown_to_html = MagicMock(side_effect=lambda x: str(x) if x else "")
+        mock_publisher_class.return_value = mock_publisher_inst
+        
+        # Setup mock admin_chat_id in database
+        pipeline = SMMPipeline()
+        pipeline.db.set_setting("admin_chat_id", "55555")
+        
+        mock_httpx_post.return_value = MagicMock(status_code=200)
+
+        # Run pipeline
+        summary = await pipeline.run()
+
+        # Assert results
+        assert summary["published"] == 1  # HackerNews 95 got auto-published
+        assert summary["queued"] == 1     # Dev.to 80 got queued for moderation
+        
+        # Verify moderation notification was triggered
+        # Check that httpx.AsyncClient.post was called to send the Telegram message to chat_id 55555
+        called_chat_id_check = False
+        for call in mock_httpx_post.call_args_list:
+            json_payload = call[1].get("json", {})
+            if json_payload.get("chat_id") == 55555:
+                called_chat_id_check = True
+                assert "ID: " in json_payload.get("text", "")
+                assert "Devto 80" in json_payload.get("text", "")
+                assert "80/100" in json_payload.get("text", "")
+                
+        assert called_chat_id_check, "Did not send Telegram moderation notification to admin"
+

@@ -186,8 +186,6 @@ class SMMPipeline:
                         summary["queued"] += 1
                         continue
                 
-                # If we cannot auto-publish (paused, already published one, or score is 70-84)
-                # but score is high enough to be queued (>=70)
                 if score >= QUEUE_THRESHOLD or (score >= AUTO_PUBLISH_THRESHOLD and (is_paused or published_any)):
                     # B. Add to review queue
                     logger.info(f"Queuing candidate '{candidate.get('title')}' with score {score}")
@@ -199,6 +197,7 @@ class SMMPipeline:
                         # Transition to pending_review but mark text as None/waiting
                         self.db.update_scoring(item_id, score, candidate.get("score_reason"), status='pending_review')
                         summary["queued"] += 1
+                        await self._send_moderation_notification(item_id, candidate.get("title"), score, candidate.get("score_reason"), None, None, candidate.get("source"))
                         continue
                     
                     # Adapt text beforehand so it is ready for approval in Telegram Bot
@@ -207,9 +206,11 @@ class SMMPipeline:
                         self.db.save_adapted_content(item_id, adapted["title"], adapted["text"], status='pending_review')
                         summary["queued"] += 1
                         adapted_count += 1
+                        await self._send_moderation_notification(item_id, candidate.get("title"), score, candidate.get("score_reason"), adapted["title"], adapted["text"], candidate.get("source"))
                     else:
                         self.db.update_scoring(item_id, score, candidate.get("score_reason"), status='pending_review')
                         summary["queued"] += 1
+                        await self._send_moderation_notification(item_id, candidate.get("title"), score, candidate.get("score_reason"), None, None, candidate.get("source"))
                 else:
                     # C. Reject
                     self.db.update_scoring(item_id, score, candidate.get("score_reason"), status='rejected')
@@ -220,3 +221,53 @@ class SMMPipeline:
 
         logger.info(f"Pipeline run complete: {summary}")
         return summary
+
+    async def _send_moderation_notification(self, item_id: int, original_title: str, score: int, reason: str, adapted_title: str, adapted_text: str, source: str):
+        admin_chat_id = self.db.get_setting("admin_chat_id")
+        if not admin_chat_id:
+            logger.info("No admin_chat_id configured. Skipping Telegram moderation notification.")
+            return
+
+        from smm_engine.config import TELEGRAM_BOT_TOKEN
+        if not TELEGRAM_BOT_TOKEN:
+            return
+
+        preview_title = self.publisher._escape_html(adapted_title) if adapted_title else "<i>Без заголовка (будет адаптирован при публикации)</i>"
+        preview_text = self.publisher._format_markdown_to_html(adapted_text) if adapted_text else "<i>Текст не адаптирован (будет адаптирован при публикации)</i>"
+        
+        msg = (
+            f"<b>🔔 Новость на модерацию (ID: {item_id})</b>\n"
+            f"<b>Источник:</b> {source}\n"
+            f"<b>Оригинал:</b> {self.publisher._escape_html(original_title)}\n"
+            f"<b>Скоринг:</b> {score}/100\n"
+            f"<b>Причина:</b> {self.publisher._escape_html(reason)}\n\n"
+            f"--- <b>ПРЕВЬЮ ПОСТА</b> ---\n"
+            f"<b>{preview_title}</b>\n\n"
+            f"{preview_text}"
+        )
+        
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "✅ Опубликовать", "callback_data": f"approve_{item_id}"},
+                    {"text": "❌ В корзину", "callback_data": f"reject_{item_id}"},
+                    {"text": "🗑️ В мусор", "callback_data": f"trash_{item_id}"}
+                ]
+            ]
+        }
+        
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": int(admin_chat_id),
+            "text": msg,
+            "parse_mode": "HTML",
+            "reply_markup": keyboard
+        }
+        
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=payload, timeout=10)
+                logger.info(f"Sent moderation notification to admin {admin_chat_id}: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to send moderation notification to admin: {e}")

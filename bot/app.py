@@ -42,9 +42,30 @@ logging.getLogger().addHandler(memory_log_handler)
 
 logger = logging.getLogger("telegram_bot")
 
+async def scheduler_loop():
+    """Background task to run pipeline automatically at regular intervals."""
+    import os
+    interval_hours = float(os.getenv("PARSING_INTERVAL_HOURS", "3.0"))
+    interval_seconds = int(interval_hours * 3600)
+    
+    logger.info(f"Background scheduler started. Interval: {interval_hours} hours ({interval_seconds} seconds).")
+    
+    # Wait for the application to be fully up (e.g., 30 seconds)
+    await asyncio.sleep(30)
+    
+    while True:
+        try:
+            logger.info("Scheduler: Triggering auto-pipeline run...")
+            await run_pipeline_task()
+        except Exception as e:
+            logger.error(f"Scheduler: Error during pipeline execution: {e}")
+            
+        logger.info(f"Scheduler: Sleeping for {interval_seconds} seconds...")
+        await asyncio.sleep(interval_seconds)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Auto-registers Telegram Webhook on startup using Render URL"""
+    """Auto-registers Telegram Webhook and starts background scheduler on startup"""
     import os
     render_url = os.getenv("RENDER_EXTERNAL_URL")
     if render_url and TELEGRAM_BOT_TOKEN:
@@ -62,7 +83,18 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Auto-setting Telegram Webhook to {webhook_url}: {resp.json()}")
         except Exception as e:
             logger.error(f"Failed to auto-set Telegram Webhook on startup: {e}")
+            
+    # Start Scheduler Task
+    scheduler_task = asyncio.create_task(scheduler_loop())
+    
     yield
+    
+    # Cancel Scheduler Task on shutdown
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
 
 app = FastAPI(title="SMM Automator Queue Bot", lifespan=lifespan)
 
@@ -309,6 +341,11 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
             chat_id = message["chat"]["id"]
             text = message.get("text", "")
             
+            # Auto-register admin chat ID on any command
+            if text.startswith("/"):
+                db.set_setting("admin_chat_id", str(chat_id))
+                logger.info(f"Auto-registered admin_chat_id: {chat_id}")
+            
             if text == "/start":
                 welcome = (
                     "<b>Привет! Я бот управления SMM Автоматизатором.</b>\n\n"
@@ -417,12 +454,28 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     await answer_callback_query(cb_id, "Новость не найдена!")
                     return {"status": "ok"}
                     
-                await answer_callback_query(cb_id, "Отклонено.")
+                await answer_callback_query(cb_id, "Перенесено в корзину.")
                 db.update_scoring(item_id, item["score"], item["score_reason"], status='rejected')
                 await edit_message_text(
                     chat_id, 
                     message_id, 
-                    f"<b>❌ Отклонено модератором:</b>\n{item['title']}"
+                    f"<b>❌ В корзине (отклонено модератором):</b>\n{item['title']}"
+                )
+                
+            elif data.startswith("trash_"):
+                item_id = int(data.split("_")[1])
+                item = db.get_by_id(item_id)
+                
+                if not item:
+                    await answer_callback_query(cb_id, "Новость не найдена!")
+                    return {"status": "ok"}
+                    
+                await answer_callback_query(cb_id, "Удалено в мусор.")
+                db.update_scoring(item_id, item["score"], item["score_reason"], status='trash')
+                await edit_message_text(
+                    chat_id, 
+                    message_id, 
+                    f"<b>🗑️ В мусоре:</b>\n{item['title']}"
                 )
                 
     except Exception as e:
@@ -555,6 +608,9 @@ async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: Ba
     elif req.action == "reject":
         db.update_scoring(item_id, item["score"], item["score_reason"], status='rejected')
         return {"status": "ok", "action": "rejected"}
+    elif req.action == "trash":
+        db.update_scoring(item_id, item["score"], item["score_reason"], status='trash')
+        return {"status": "ok", "action": "trash"}
         
     raise HTTPException(status_code=400, detail="Invalid action")
 
