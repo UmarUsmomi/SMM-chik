@@ -475,7 +475,7 @@ async def test_selective_blockquote():
         mock_generate.return_value = "{}"
         mock_parse.return_value = {"title": "Test Title", "body": "Test Body"}
         
-        # Scenario 1: Short content (< 800 chars)
+        # Scenario 1: Short content (< 500 chars)
         short_content = "This is a short news content."
         item_short = NewsItem(
             source="test_source",
@@ -492,8 +492,8 @@ async def test_selective_blockquote():
         assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" in prompt_short
         assert "Если в новости есть яркая прямая цитата" not in prompt_short
 
-        # Scenario 2: Long content (> 800 chars) with random < 0.60
-        long_content = "A" * 850
+        # Scenario 2: Long content (> 500 chars) with random < 0.60
+        long_content = "A" * 600
         item_long = NewsItem(
             source="test_source",
             source_id="2",
@@ -510,7 +510,7 @@ async def test_selective_blockquote():
         assert "Если в новости есть яркая прямая цитата" in prompt_long_allowed
         assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" not in prompt_long_allowed
 
-        # Scenario 3: Long content (> 800 chars) with random >= 0.60
+        # Scenario 3: Long content (> 500 chars) with random >= 0.60
         mock_generate.reset_mock()
         with patch("random.random", return_value=0.70):
             await adapter._adapt_pass(item_long)

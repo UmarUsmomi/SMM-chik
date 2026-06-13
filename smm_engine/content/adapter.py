@@ -77,7 +77,7 @@ class ContentAdapter:
         max_length = formatting.get("max_length", 400)
         
         content_str = item.raw_data.get("content") or item.raw_data.get("description") or item.raw_data.get("summary") or ""
-        is_long = len(content_str) > 800
+        is_long = len(content_str) > 500
         import random
         allow_blockquote = is_long and (random.random() < 0.60)
         
