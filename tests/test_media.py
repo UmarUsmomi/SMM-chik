@@ -214,13 +214,22 @@ async def test_image_generator_cloudflare(tmp_path):
             
             mock_response = MagicMock()
             mock_response.status_code = 200
-            mock_response.content = b"fake_cf_image_data_with_sufficient_length_to_pass_validation_which_is_over_1000_bytes" * 20
+            
+            # Generate a valid PNG image dynamically using PIL
+            from io import BytesIO
+            from PIL import Image as PILImage
+            tmp_img = PILImage.new("RGB", (10, 10), color="blue")
+            buf = BytesIO()
+            tmp_img.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+            # Pad to exceed 1000 bytes (trailing bytes are ignored by PNG reader)
+            mock_response.content = png_bytes + b'\x00' * 1000
             
             with patch("httpx.AsyncClient.post", return_value=mock_response):
                 path = await img_gen.generate_cloudflare_background("test_keywords")
                 assert path is not None
                 assert path.exists()
-                assert "bg_cf.jpg" in path.name
+                assert "bg_cf.png" in path.name
 
 
 

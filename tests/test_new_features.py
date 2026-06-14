@@ -416,8 +416,11 @@ async def test_telegram_publisher_original_image_bypass():
     mock_path = MagicMock(spec=Path)
     mock_path.exists.return_value = True
     
+    mock_cover_path = MagicMock(spec=Path)
+    mock_cover_path.exists.return_value = True
+    
     with patch.object(ImageGenerator, "download_image", return_value=mock_path) as mock_download, \
-         patch.object(ImageGenerator, "create_cover") as mock_create_cover, \
+         patch.object(ImageGenerator, "create_cover", return_value=mock_cover_path) as mock_create_cover, \
          patch.object(pub, "publish_photo", return_value=True) as mock_publish_photo:
          
         raw_data = {"cover_image": "http://example.com/image.jpg"}
@@ -425,11 +428,12 @@ async def test_telegram_publisher_original_image_bypass():
         
         assert res is True
         mock_download.assert_called_once_with("http://example.com/image.jpg")
-        # create_cover should be bypassed entirely
-        mock_create_cover.assert_not_called()
-        # publish_photo should be called with mock_path
-        mock_publish_photo.assert_called_once_with("Test Title", "Test Text", str(mock_path))
-        # Ensure it unlinks the path
+        # create_cover should be called to apply overlay
+        mock_create_cover.assert_called_once_with("Test Title", mock_path)
+        # publish_photo should be called with cover path
+        mock_publish_photo.assert_called_once_with("Test Title", "Test Text", str(mock_cover_path))
+        # Ensure both cover and bg are unlinked
+        mock_cover_path.unlink.assert_called_once()
         mock_path.unlink.assert_called_once()
 
     # Test fallback to AI background generation when download fails

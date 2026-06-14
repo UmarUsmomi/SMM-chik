@@ -184,6 +184,9 @@ pipeline_lock = asyncio.Lock()
 active_publishing_ids = set()
 publishing_lock = asyncio.Lock()
 
+# FSM state for /test_image command
+test_image_states = {}  # chat_id -> {"prompt": str, "awaiting": str}
+
 async def publish_item_background(item_id: int, chat_id: int, message_id: int):
     """Background task to publish post, preventing duplicate execution and webhook timeouts."""
     async with publishing_lock:
@@ -217,12 +220,25 @@ async def publish_item_background(item_id: int, chat_id: int, message_id: int):
             from smm_engine.content.adapter import ContentAdapter
             from smm_engine.scrapers.base import NewsItem
             adapter = ContentAdapter()
+            
+            db_raw_data = item.get("raw_data")
+            parsed_raw = {}
+            if db_raw_data:
+                if isinstance(db_raw_data, str):
+                    try:
+                        import json
+                        parsed_raw = json.loads(db_raw_data)
+                    except Exception:
+                        pass
+                elif isinstance(db_raw_data, dict):
+                    parsed_raw = db_raw_data
+
             news_item = NewsItem(
                 source=item["source"],
                 source_id=item["source_id"],
                 title=item["title"],
                 url=item["url"],
-                raw_data={}
+                raw_data=parsed_raw
             )
             try:
                 adapted = await adapter.adapt_news(news_item)
@@ -373,6 +389,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     "/pause — Приостановить автопубликацию (все посты в очередь)\n"
                     "/resume — Включить автопубликацию (85+ сразу в канал)\n"
                     "/force — Запустить парсинг и публикацию вручную\n"
+                    "/test_image — Тестировать генераторы изображений\n"
                     "/reset — Очистить базу данных дубликатов для тестирования"
                 )
                 await send_bot_message(chat_id, welcome)
@@ -441,6 +458,29 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                 db.clear_all_news()
                 await send_bot_message(chat_id, "<b>🧹 База данных новостей очищена!</b> Теперь вы можете запустить <code>/force</code> для повторного парсинга и тестирования.")
                 
+            elif text == "/test_image":
+                test_image_states[chat_id] = {"awaiting": "prompt"}
+                await send_bot_message(chat_id, "<b>🖼 Тест генерации изображений</b>\n\nНапишите промпт для генерации изображения:")
+                
+            elif not text.startswith("/") and chat_id in test_image_states:
+                state = test_image_states[chat_id]
+                if state.get("awaiting") == "prompt":
+                    test_image_states[chat_id] = {"prompt": text, "awaiting": "generator"}
+                    keyboard = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "🖼 Pollinations", "callback_data": f"gen_pollinations_{chat_id}"},
+                            ],
+                            [
+                                {"text": "☁️ Cloudflare", "callback_data": f"gen_cloudflare_{chat_id}"},
+                            ],
+                            [
+                                {"text": "🤗 HuggingFace", "callback_data": f"gen_huggingface_{chat_id}"},
+                            ]
+                        ]
+                    }
+                    await send_bot_message(chat_id, f"<b>Промпт:</b> {publisher._escape_html(text)}\n\nВыберите генератор:", reply_markup=keyboard)
+                
         # 2. Handle callback queries from buttons
         elif "callback_query" in update:
             cb = update["callback_query"]
@@ -495,6 +535,61 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     message_id, 
                     f"<b>🗑️ В мусоре:</b>\n{item['title']}"
                 )
+                
+            elif data.startswith("gen_"):
+                parts = data.split("_")
+                generator = parts[1]  # pollinations, cloudflare, or huggingface
+                target_chat_id = int(parts[2])
+                
+                state = test_image_states.get(target_chat_id)
+                if not state or not state.get("prompt"):
+                    await answer_callback_query(cb_id, "Сессия истекла. Используйте /test_image заново.")
+                    return {"status": "ok"}
+                
+                prompt = state["prompt"]
+                del test_image_states[target_chat_id]
+                
+                await answer_callback_query(cb_id, f"Генерирую через {generator}...")
+                await edit_message_text(chat_id, message_id, f"<b>⏳ Генерирую изображение...</b>\nПромпт: {publisher._escape_html(prompt)}\nГенератор: {generator}")
+                
+                # Generate image
+                from smm_engine.media.image_handler import ImageGenerator
+                img_gen = ImageGenerator()
+                img_path = None
+                
+                try:
+                    if generator == "pollinations":
+                        img_path = await img_gen.generate_pollinations_background(prompt)
+                    elif generator == "cloudflare":
+                        img_path = await img_gen.generate_cloudflare_background(prompt)
+                    elif generator == "huggingface":
+                        img_path = await img_gen.generate_hf_background(prompt)
+                except Exception as e:
+                    logger.error(f"Test image generation error: {e}")
+                
+                if img_path and img_path.exists():
+                    # Send the generated image
+                    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            with open(img_path, "rb") as f:
+                                resp = await client.post(
+                                    url,
+                                    data={"chat_id": chat_id, "caption": f"✅ {generator}\nПромпт: {prompt[:200]}"},
+                                    files={"photo": f},
+                                    timeout=45
+                                )
+                                if resp.status_code != 200:
+                                    await send_bot_message(chat_id, f"❌ Ошибка отправки: {resp.text[:200]}")
+                    except Exception as e:
+                        await send_bot_message(chat_id, f"❌ Ошибка: {e}")
+                    finally:
+                        try:
+                            img_path.unlink()
+                        except Exception:
+                            pass
+                else:
+                    await send_bot_message(chat_id, f"❌ Генератор <b>{generator}</b> не смог создать изображение. Проверьте API ключи и логи.")
                 
     except Exception as e:
         logger.error(f"Error handling webhook: {e}", exc_info=True)

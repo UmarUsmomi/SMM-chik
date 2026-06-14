@@ -174,7 +174,7 @@ class ImageGenerator:
         logger.info(f"Generating AI cover using Pollinations.ai: {prompt[:60]}...")
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=30, follow_redirects=True)
+                resp = await client.get(url, timeout=60, follow_redirects=True)
                 if resp.status_code == 200 and len(resp.content) > 1000:
                     with open(img_path, "wb") as f:
                         f.write(resp.content)
@@ -187,14 +187,12 @@ class ImageGenerator:
         return None
 
     async def generate_cloudflare_background(self, keywords: str, vertical: bool = False) -> Path:
-        """Generates background using Cloudflare Workers AI REST API.
-        Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env variables.
-        Uses @cf/black-forest-labs/flux-1-schnell model with 10,000 free neurons/day."""
+        """Generates background using Cloudflare Workers AI REST API."""
         from smm_engine.config import CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
         if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
             return None
         
-        img_path = self.temp_dir / ("bg_cf_v.jpg" if vertical else "bg_cf.jpg")
+        img_path = self.temp_dir / ("bg_cf_v.png" if vertical else "bg_cf.png")
         
         clean_keywords = keywords.replace(",", " ")
         prompt = (
@@ -218,14 +216,50 @@ class ImageGenerator:
         logger.info(f"Generating AI cover using Cloudflare Workers AI: {prompt[:60]}...")
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(api_url, headers=headers, json=payload, timeout=30)
-                if resp.status_code == 200 and len(resp.content) > 1000:
-                    with open(img_path, "wb") as f:
-                        f.write(resp.content)
-                    logger.info("Successfully generated background via Cloudflare Workers AI")
-                    return img_path
+                resp = await client.post(api_url, headers=headers, json=payload, timeout=45)
+                if resp.status_code == 200:
+                    content_type = resp.headers.get("content-type", "")
+                    if "image" in content_type:
+                        # Direct image bytes
+                        with open(img_path, "wb") as f:
+                            f.write(resp.content)
+                    elif "json" in content_type:
+                        # JSON response with base64 image
+                        import json, base64
+                        data = resp.json()
+                        if isinstance(data, dict) and "result" in data:
+                            result = data["result"]
+                            if isinstance(result, dict) and "image" in result:
+                                img_bytes = base64.b64decode(result["image"])
+                                with open(img_path, "wb") as f:
+                                    f.write(img_bytes)
+                            else:
+                                logger.warning(f"Cloudflare unexpected result structure: {list(data.keys())}")
+                                return None
+                        else:
+                            logger.warning(f"Cloudflare unexpected response: {str(data)[:200]}")
+                            return None
+                    else:
+                        # Try saving as-is (could be raw image bytes without proper content-type)
+                        if len(resp.content) > 1000:
+                            with open(img_path, "wb") as f:
+                                f.write(resp.content)
+                        else:
+                            logger.warning(f"Cloudflare response too small: {len(resp.content)} bytes")
+                            return None
+                    
+                    # Validate the saved file is actually an image
+                    try:
+                        test_img = Image.open(img_path)
+                        test_img.verify()
+                        logger.info("Successfully generated background via Cloudflare Workers AI")
+                        return img_path
+                    except Exception as e:
+                        logger.warning(f"Cloudflare output is not a valid image: {e}")
+                        img_path.unlink(missing_ok=True)
+                        return None
                 else:
-                    logger.warning(f"Cloudflare Workers AI failed: status={resp.status_code}")
+                    logger.warning(f"Cloudflare Workers AI failed: status={resp.status_code}, body={resp.text[:200]}")
         except Exception as e:
             logger.error(f"Error calling Cloudflare Workers AI: {e}")
         return None
@@ -308,113 +342,17 @@ class ImageGenerator:
         return glitched_composite.convert("RGB")
 
     def _draw_tech_graphics(self, draw: ImageDraw.ImageDraw, width: int, height: int, colors: dict):
-        """Draws subtle, high-tech graphical HUD elements, coordinate grids, and circuit node paths to fill the background"""
-        import math
+        """Draws minimal, clean decorative accents"""
         brand_accent = tuple(self._parse_color(colors.get("brand_accent"), [217, 4, 41, 255]))
+        subtle_white = (255, 255, 255, 30)
         
-        # Setup small font for coordinate grids and technical labels
-        coord_font_size = 9
-        if self.font_path and self.font_path.exists():
-            coord_font = ImageFont.truetype(str(self.font_path), coord_font_size)
-        else:
-            try:
-                coord_font = ImageFont.load_default(size=coord_font_size)
-            except TypeError:
-                coord_font = ImageFont.load_default()
-
-        # Helper to draw a high-tech glowing junction node
-        def draw_glow_node(cx: int, cy: int, is_accent: bool = True):
-            color = brand_accent if is_accent else (255, 255, 255, 255)
-            # Outer glow (large, faint)
-            glow_rad = 6
-            draw.ellipse([cx - glow_rad, cy - glow_rad, cx + glow_rad, cy + glow_rad], fill=(color[0], color[1], color[2], 25))
-            # Mid ring (medium, medium opacity)
-            mid_rad = 3
-            draw.ellipse([cx - mid_rad, cy - mid_rad, cx + mid_rad, cy + mid_rad], outline=(color[0], color[1], color[2], 100), width=1)
-            # Inner core (small, solid)
-            core_rad = 1.5
-            draw.ellipse([cx - core_rad, cy - core_rad, cx + core_rad, cy + core_rad], fill=(color[0], color[1], color[2], 220))
-
-        # Helper to draw component codes
-        def draw_label(text: str, x: int, y: int, align: str = "left"):
-            try:
-                text_w = coord_font.getlength(text)
-            except AttributeError:
-                text_w = len(text) * 6
-            draw_x = x - text_w if align == "right" else x
-            draw.text((draw_x, y - 5), text, font=coord_font, fill=(255, 255, 255, 45))
-
-        offset = 24
-
-        # 3. Dynamic & Aspect-Ratio Aware Sci-Fi Circuit Paths
-        circuit_y1 = int(height * 0.15)
-        circuit_y2 = int(height * 0.45)
-        
-        # Parallel data bus lines (spaced 6px apart) for top-left
-        bus_offset = 6
-        circuits_list = [
-            # Top-Left Parallel Bus Track A
-            {"path": [(48, circuit_y1), (160, circuit_y1), (200, circuit_y1 + 40)], "labels": {0: "BUS_L0", 2: "R12"}, "glows": [2]},
-            # Top-Left Parallel Bus Track B
-            {"path": [(48, circuit_y1 + bus_offset), (160 - 2, circuit_y1 + bus_offset), (200 - 2, circuit_y1 + 40 + bus_offset)], "labels": {}, "glows": [2]},
-            
-            # Top-Right Chip Interface
-            {"path": [(width - 48, circuit_y1), (width - 160, circuit_y1), (width - 200, circuit_y1 + 40)], "labels": {0: "IC_CLK", 2: "C23"}, "glows": [2]},
-            
-            # Mid-Left Telemetry
-            {"path": [(48, circuit_y2), (120, circuit_y2), (160, circuit_y2 + 40)], "labels": {0: "TX_0", 2: "GND"}, "glows": [0, 2]},
-            # Mid-Right Telemetry
-            {"path": [(width - 48, circuit_y2), (width - 120, circuit_y2), (width - 160, circuit_y2 + 40)], "labels": {0: "RX_1", 2: "VCC"}, "glows": [0, 2]}
-        ]
-        
-        for c in circuits_list:
-            path = c["path"]
-            glows = c.get("glows", [])
-            labels = c.get("labels", {})
-            
-            # Draw circuit path segments
-            for i in range(len(path) - 1):
-                draw.line([path[i], path[i+1]], fill=(255, 255, 255, 20), width=1)
-                
-            # Draw nodes and component labels
-            for idx, node in enumerate(path):
-                if idx in glows:
-                    draw_glow_node(node[0], node[1], is_accent=True)
-                else:
-                    dot_size = 2.5 if idx == 0 or idx == len(path)-1 else 1.5
-                    draw.ellipse(
-                        [node[0] - dot_size, node[1] - dot_size, node[0] + dot_size, node[1] + dot_size],
-                        fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80),
-                        outline=(255, 255, 255, 60),
-                        width=1
-                    )
-                if idx in labels:
-                    align = "right" if node[0] > width // 2 else "left"
-                    offset_x = -8 if align == "right" else 8
-                    draw_label(labels[idx], node[0] + offset_x, node[1], align=align)
-
-        # 4. Draw tech diagnostic tick scales along the top/bottom inner borders
-        tick_y_top = offset + 1
-        tick_y_bottom = height - offset - 4
-        
-        for x in range(offset + 60, width - offset - 60, 40):
-            is_major = (x - offset) % 160 == 0
-            tick_h = 6 if is_major else 3
-            draw.line([(x, tick_y_top), (x, tick_y_top + tick_h)], fill=(255, 255, 255, 20), width=1)
-            draw.line([(x, tick_y_bottom), (x, tick_y_bottom - tick_h)], fill=(255, 255, 255, 20), width=1)
-
-        # 5. Small HUD corner labels (using Montserrat-Bold or system font)
-        hud_font_size = 12
-        if self.font_path and self.font_path.exists():
-            hud_font = ImageFont.truetype(str(self.font_path), hud_font_size)
-        else:
-            try:
-                hud_font = ImageFont.load_default(size=hud_font_size)
-            except TypeError:
-                hud_font = ImageFont.load_default()
-            
-        draw.text((offset + 12, offset + 8), "SYS_INIT //", font=hud_font, fill=(255, 255, 255, 20))
-        draw.text((width - offset - 90, offset + 8), "ONLINE [85%]", font=hud_font, fill=(255, 255, 255, 20))
+        # Subtle top horizontal accent line
+        line_w = int(width * 0.25)
+        line_x = (width - line_w) // 2
+        draw.line([(line_x, 60), (line_x + line_w, 60)], fill=subtle_white, width=1)
+        # Small accent dot at center of line
+        cx = width // 2
+        draw.ellipse([cx - 2, 58, cx + 2, 62], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80))
 
     def _generate_procedural_background(self, width: int, height: int, colors: dict) -> Image.Image:
         """Generates a premium cyber tech style diagonal gradient background"""
@@ -575,7 +513,7 @@ class ImageGenerator:
             
             import re
             clean_title = re.sub(r'<[^>]+>', '', title)
-            clean_title = "".join(c for c in clean_title if ord(c) < 0x2000)
+            clean_title = "".join(c for c in clean_title if ord(c) < 0x10000 and c not in '\ufeff\ufffe')
             clean_title = re.sub(r'\s+', ' ', clean_title).strip()
             
             # Remove anything that looks like body text accidentally appended to title

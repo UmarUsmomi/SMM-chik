@@ -33,7 +33,26 @@ class ContentAdapter:
         try:
             logger.info(f"Running humanizer on adapted content for '{item.title[:30]}...'")
             humanized_title = await self.humanizer.humanize(adapted_raw.get("title", ""))
-            humanized_body = await self.humanizer.humanize(adapted_raw.get("body", ""))
+            
+            # Preserve blockquotes through humanizer by extracting them first
+            import re
+            body_raw = adapted_raw.get("body", "")
+            blockquote_pattern = r'(<blockquote[^>]*>.*?</blockquote>)'
+            blockquotes = re.findall(blockquote_pattern, body_raw, re.DOTALL)
+            body_without_quotes = re.sub(blockquote_pattern, '{{QUOTE_PLACEHOLDER}}', body_raw, flags=re.DOTALL)
+            
+            humanized_body = await self.humanizer.humanize(body_without_quotes)
+            
+            # Re-insert preserved blockquotes
+            for bq in blockquotes:
+                humanized_body = humanized_body.replace('{{QUOTE_PLACEHOLDER}}', bq, 1)
+            # Remove any remaining placeholders if humanizer swallowed them
+            humanized_body = humanized_body.replace('{{QUOTE_PLACEHOLDER}}', '')
+            
+            if '<blockquote' in body_raw and '<blockquote' not in humanized_body:
+                logger.warning(f"Blockquote was LOST during humanization for '{item.title[:30]}...'")
+            elif '<blockquote' in humanized_body:
+                logger.info(f"Blockquote survived humanization for '{item.title[:30]}...'")
             
             # Combine body and tags if needed, or format as final post text
             hashtags = self._generate_hashtags(item.source, item.raw_data.get("tags", []))
