@@ -1,0 +1,2 @@
+## 2026-06-08T10:19:19Z
+You are auditor_1. Perform a forensic integrity audit on the changes made to smm_engine/media/image_handler.py and tests/test_media.py. Verify that the implemented watermark rendering, graphics upgrades, and prompt optimizations are authentic, functional, and free from any integrity violations (hardcoded test results, dummy/facade implementations, or task circumvention). Write your audit report and final verdict to d:\SMM\.agents\teamwork_preview_auditor_1\audit.md and notify me.

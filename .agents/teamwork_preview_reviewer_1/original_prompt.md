@@ -1,0 +1,2 @@
+## 2026-06-08T10:19:19Z
+You are reviewer_1. Review the changes implemented by the worker in smm_engine/media/image_handler.py and tests/test_media.py. Run the test suite using pytest to verify that all unit and integration tests pass successfully (please run the pytest command and wait/approve as necessary). Write your review report to d:\SMM\.agents\teamwork_preview_reviewer_1\review.md and notify me when done.

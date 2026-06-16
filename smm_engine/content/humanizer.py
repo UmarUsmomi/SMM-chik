@@ -89,7 +89,19 @@ Instructions:
             )
             cleaned_text = response_text.strip()
             if cleaned_text:
-                return cleaned_text
+                # Post-sanitize: remove any stray markdown artifacts that reveal AI origin
+                import re
+                # Remove markdown headers
+                cleaned_text = re.sub(r'^#{1,6}\s+', '', cleaned_text, flags=re.MULTILINE)
+                # Remove single asterisks not part of **bold**
+                cleaned_text = re.sub(r'(?<!\*)\*(?!\*)', '', cleaned_text)
+                # Remove dash bullets at line start
+                cleaned_text = re.sub(r'^[\-]\s+', '🔹 ', cleaned_text, flags=re.MULTILINE)
+                # Remove excessive separator lines
+                cleaned_text = re.sub(r'\n-{3,}\n', '\n', cleaned_text)
+                # Collapse multiple spaces
+                cleaned_text = re.sub(r' +', ' ', cleaned_text)
+                return cleaned_text.strip()
             return text
         except Exception as e:
             logger.error(f"Error humanizing text: {e}")

@@ -58,6 +58,10 @@ class ContentAdapter:
             hashtags = self._generate_hashtags(item.source, item.raw_data.get("tags", []))
             final_text = f"{humanized_body}\n\n{hashtags}".strip()
             
+            # Sanitize markdown artifacts that reveal AI origin
+            final_text = self._sanitize_ai_text(final_text)
+            humanized_title = self._sanitize_ai_text(humanized_title)
+            
             # Validation: check for empty or literal 'None' string (common AI error under rate limit/blocks)
             if not humanized_title or not humanized_body:
                 return None
@@ -96,9 +100,9 @@ class ContentAdapter:
         max_length = formatting.get("max_length", 400)
         
         content_str = item.raw_data.get("content") or item.raw_data.get("description") or item.raw_data.get("summary") or ""
-        is_long = len(content_str) > 500
+        is_long = len(content_str) > 300
         import random
-        allow_blockquote = is_long and (random.random() < 0.60)
+        allow_blockquote = is_long and (random.random() < 0.50)
         
         if allow_blockquote:
             blockquote_instruction = "- Если в новости есть яркая прямая цитата эксперта или разработчика, оформи её тегом <blockquote expandable>текст цитаты</blockquote>. Используй цитаты только при наличии реальной цитаты в источнике, не придумывай их!"
@@ -151,3 +155,32 @@ class ContentAdapter:
     def _generate_hashtags(self, source: str, tags: list) -> str:
         """Disabled: Hashtags are no longer used based on new design"""
         return ""
+
+    def _sanitize_ai_text(self, text: str) -> str:
+        """Removes markdown artifacts that make text look AI-generated."""
+        import re
+        if not text:
+            return text
+
+        # Remove markdown headers (#, ##, ###)
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+
+        # Remove single asterisks used as bullet markers (but keep **bold**)
+        # Replace lines starting with * or - followed by space with emoji bullet
+        text = re.sub(r'^[\*\-]\s+', '🔹 ', text, flags=re.MULTILINE)
+        # Remove any remaining stray single asterisks not part of **bold**
+        text = re.sub(r'(?<!\*)\*(?!\*)', '', text)
+
+        # Remove markdown tables and code blocks (rare but possible)
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        text = re.sub(r'\|.*\|', '', text)
+
+        # Remove excessive dashes used as separators
+        text = re.sub(r'\n-{3,}\n', '\n', text)
+
+        # Remove leading/trailing whitespace per line and collapse multiple spaces
+        lines = [line.strip() for line in text.splitlines()]
+        text = '\n'.join(lines)
+        text = re.sub(r' +', ' ', text)
+
+        return text.strip()

@@ -1,0 +1,82 @@
+diff --git a/smm_engine/content/adapter.py b/smm_engine/content/adapter.py
+index a1b2c3d..e4f5g6h 100055
+--- a/smm_engine/content/adapter.py
++++ b/smm_engine/content/adapter.py
+@@ -77,7 +77,7 @@ class ContentAdapter:
+         max_length = formatting.get("max_length", 400)
+         
+         content_str = item.raw_data.get("content") or item.raw_data.get("description") or item.raw_data.get("summary") or ""
+-        is_long = len(content_str) > 800
++        is_long = len(content_str) > 500
+         import random
+         allow_blockquote = is_long and (random.random() < 0.60)
+         
+diff --git a/tests/test_new_features.py b/tests/test_new_features.py
+index 9876543..1234567 100055
+--- a/tests/test_new_features.py
++++ b/tests/test_new_features.py
+@@ -475,8 +475,8 @@ async def test_selective_blockquote():
+         mock_parse.return_value = {"title": "Test Title", "body": "Test Body"}
+         
+-        # Scenario 1: Short content (< 800 chars)
++        # Scenario 1: Short content (< 500 chars)
+         short_content = "This is a short news content."
+         item_short = NewsItem(
+             source="test_source",
+             source_id="1",
+             title="Short Title",
+             url="http://example.com/short",
+             raw_data={"content": short_content}
+         )
+         
+         # Should always prohibit blockquotes
+         await adapter._adapt_pass(item_short)
+         
+         prompt_short = mock_generate.call_args[0][0]
+         assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" in prompt_short
+         assert "Если в новости есть яркая прямая цитата" not in prompt_short
+ 
+-        # Scenario 2: Long content (> 800 chars) with random < 0.60
+-        long_content = "A" * 850
++        # Scenario 2: Long content (> 500 chars) with random < 0.60
++        long_content = "A" * 850
+         item_long = NewsItem(
+             source="test_source",
+             source_id="2",
+             title="Long Title",
+             url="http://example.com/long",
+             raw_data={"content": long_content}
+         )
+         
+         mock_generate.reset_mock()
+         with patch("random.random", return_value=0.50):
+             await adapter._adapt_pass(item_long)
+             
+         prompt_long_allowed = mock_generate.call_args[0][0]
+         assert "Если в новости есть яркая прямая цитата" in prompt_long_allowed
+         assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" not in prompt_long_allowed
+ 
+-        # Scenario 3: Long content (> 800 chars) with random >= 0.60
++        # Scenario 3: Long content (> 500 chars) with random >= 0.60
+         mock_generate.reset_mock()
+         with patch("random.random", return_value=0.70):
+             await adapter._adapt_pass(item_long)
+             
+         prompt_long_forbidden = mock_generate.call_args[0][0]
+         assert "КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote>" in prompt_long_forbidden
+         assert "Если в новости есть яркая прямая цитата" not in prompt_long_forbidden
+diff --git a/.env.example b/.env.example
+index 1111111..2222222 100055
+--- a/.env.example
++++ b/.env.example
+@@ -13,6 +13,9 @@ SUPABASE_KEY=
+ # Imgflip credentials (for meme generation, optional)
+ IMGFLIP_USERNAME=
+ IMGFLIP_PASSWORD=
+ 
++# Hugging Face configuration (optional, used for image generation)
++HUGGINGFACE_API_KEY=
++
+ # Cloudflare Workers AI (optional, improves image generation reliability)
+ # Get from: https://dash.cloudflare.com → Workers & Pages → AI
+ CLOUDFLARE_ACCOUNT_ID=

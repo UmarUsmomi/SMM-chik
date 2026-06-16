@@ -1,0 +1,30 @@
+diff --git a/tests/test_media.py b/tests/test_media.py
+index b123456..c67890d 100644
+--- a/tests/test_media.py
++++ b/tests/test_media.py
+@@ -28,6 +28,24 @@ def test_image_generator_vertical(tmp_path):
+         assert output_path.exists()
+         assert "final_cover_v" in output_path.name
+ 
++def test_image_generator_watermark(tmp_path):
++    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path):
++        img_gen = ImageGenerator()
++        # Inject custom watermark to verify theme configuration loading
++        img_gen.theme["watermark"] = {
++            "font_size": 20,
++            "text_parts": [
++                {"text": "CustomWatermarkText", "color_type": "primary"},
++                {"text": "⚡", "color_type": "accent"}
++            ]
++        }
++        output_path = img_gen.create_cover("Watermark Test Cover Title", bg_path=None)
++        
++        assert output_path is not None
++        assert output_path.exists()
++        from PIL import Image
++        img = Image.open(output_path)
++        assert img.size == (1080, 1080)
++
+ @pytest.mark.asyncio
+ async def test_qr_code_generator(tmp_path):
+     with patch("smm_engine.media.qr_code.BASE_DIR", tmp_path):

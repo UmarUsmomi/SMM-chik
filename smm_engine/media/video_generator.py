@@ -42,8 +42,8 @@ class VideoGenerator:
                 # Fetch background
                 bg_path = await self.image_gen.generate_ai_background(bg_keywords, vertical=True)
                 
-                # Create vertical slide frame
-                slide_img = self.image_gen.create_cover(caption, bg_path=bg_path, vertical=True)
+                # Create vertical slide frame using the new create_slide method
+                slide_img = self.image_gen.create_slide(caption, bg_path=bg_path, vertical=True)
                 if slide_img and slide_img.exists():
                     # Move to unique path for compilation
                     dest_path = self.temp_dir / f"frame_{i}.jpg"
@@ -83,7 +83,7 @@ News Title: "{title}"
 News Body: "{text}"
 
 For each slide, you need to provide:
-1. "caption": A very short, punchy Russian caption text to overlay on the screen (maximum 5-7 words, large font).
+1. "caption": A very short, punchy Russian caption text to overlay on the screen (maximum 5-7 words, large font). Write in UPPERCASE.
 2. "background_keywords": 2-3 English search keywords for a relevant background image (e.g. "code,computer", "gaming,neon", "neural,artificial").
 
 The slideshow flow:

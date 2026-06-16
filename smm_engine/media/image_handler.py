@@ -2,6 +2,8 @@ import os
 import httpx
 import logging
 import yaml
+import asyncio
+import re
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 from typing import Optional, Any
@@ -45,26 +47,71 @@ class ImageGenerator:
         return default
 
     def _setup_font(self) -> Path:
-        """Returns the path to the bundled RussoOne-Regular font"""
-        font_file = Path(__file__).resolve().parent.parent.parent / "fonts" / "RussoOne-Regular.ttf"
-        if font_file.exists():
-            logger.info(f"Using bundled RussoOne-Regular font: {font_file}")
-            return font_file
-            
-        # Fallback to download if it does not exist for some reason
-        temp_font = self.temp_dir / "RussoOne-Regular.ttf"
+        """Returns the path to a Cyrillic-capable font with robust fallback chain."""
+        # 1. Try bundled fonts (RussoOne, Montserrat)
+        candidates = [
+            Path(__file__).resolve().parent.parent.parent / "fonts" / "RussoOne-Regular.ttf",
+            Path(__file__).resolve().parent.parent.parent / "fonts" / "Montserrat-Bold.ttf",
+            Path(__file__).resolve().parent.parent.parent / "fonts" / "Montserrat-Regular.ttf",
+        ]
+        for font_file in candidates:
+            if font_file.exists():
+                try:
+                    test_font = ImageFont.truetype(str(font_file), 42)
+                    test_font.getlength("Привет")
+                    logger.info(f"Using bundled font: {font_file}")
+                    return font_file
+                except Exception as e:
+                    logger.warning(f"Bundled font {font_file} exists but failed validation: {e}")
+                    continue
+
+        # 2. Try common system fonts across platforms
+        system_fonts = [
+            Path("C:/Windows/Fonts/arialbd.ttf"),
+            Path("C:/Windows/Fonts/Arial.ttf"),
+            Path("C:/Windows/Fonts/segoeuib.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"),
+            Path("/System/Library/Fonts/Helvetica.ttc"),
+            Path("/Library/Fonts/Arial Bold.ttf"),
+        ]
+        for font_file in system_fonts:
+            if font_file.exists():
+                try:
+                    test_font = ImageFont.truetype(str(font_file), 42)
+                    test_font.getlength("Привет")
+                    logger.info(f"Using system font: {font_file}")
+                    return font_file
+                except Exception:
+                    continue
+
+        # 3. Download Roboto-Bold from Google Fonts as ultimate fallback
+        temp_font = self.temp_dir / "Roboto-Bold.ttf"
         if not temp_font.exists():
             try:
-                logger.info("Downloading RussoOne-Regular font...")
-                url = "https://github.com/google/fonts/raw/main/ofl/russoone/RussoOne-Regular.ttf"
+                logger.info("Downloading Roboto-Bold font (Cyrillic fallback)...")
+                url = "https://github.com/google/fonts/raw/main/ofl/roboto/Roboto-Bold.ttf"
                 resp = httpx.get(url, timeout=15)
-                if resp.status_code == 200:
+                if resp.status_code == 200 and len(resp.content) > 10000:
                     with open(temp_font, "wb") as f:
                         f.write(resp.content)
-                    return temp_font
+                    logger.info(f"Downloaded Roboto-Bold to {temp_font}")
+                else:
+                    logger.warning(f"Failed to download Roboto-Bold: {resp.status_code}")
             except Exception as e:
-                logger.error(f"Failed to download font: {e}")
-        return temp_font if temp_font.exists() else None
+                logger.error(f"Error downloading Roboto-Bold: {e}")
+
+        if temp_font.exists():
+            try:
+                test_font = ImageFont.truetype(str(temp_font), 42)
+                test_font.getlength("Привет")
+                return temp_font
+            except Exception as e:
+                logger.warning(f"Downloaded Roboto-Bold failed validation: {e}")
+
+        return None
 
     def _load_theme(self) -> dict:
         """Loads branding theme configuration from themes directory"""
@@ -113,8 +160,8 @@ class ImageGenerator:
         }
 
 
-    async def generate_hf_background(self, keywords: str, vertical: bool = False) -> Path:
-        """Generates background using Hugging Face Serverless Inference API"""
+    async def generate_hf_background(self, keywords: str, vertical: bool = False, retries: int = 2) -> Path:
+        """Generates background using Hugging Face Serverless Inference API with retry."""
         from smm_engine.config import HUGGINGFACE_API_KEY
         if not HUGGINGFACE_API_KEY:
             return None
@@ -135,21 +182,31 @@ class ImageGenerator:
         headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
         payload = {"inputs": prompt}
         
-        logger.info(f"Generating AI cover using Hugging Face: {prompt[:60]}...")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(api_url, headers=headers, json=payload, timeout=45)
-                if resp.status_code == 200:
-                    with open(img_path, "wb") as f:
-                        f.write(resp.content)
-                    return img_path
-                else:
-                    logger.warning(f"Hugging Face API failed: {resp.status_code} {resp.text}")
-        except Exception as e:
-            logger.error(f"Error calling Hugging Face API: {e}")
+        for attempt in range(retries + 1):
+            logger.info(f"Generating AI cover using Hugging Face (attempt {attempt + 1}): {prompt[:60]}...")
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(api_url, headers=headers, json=payload, timeout=45)
+                    if resp.status_code == 200:
+                        with open(img_path, "wb") as f:
+                            f.write(resp.content)
+                        # Validate image
+                        try:
+                            test_img = Image.open(img_path)
+                            test_img.verify()
+                            logger.info("Hugging Face image validated successfully")
+                            return img_path
+                        except Exception as e:
+                            logger.warning(f"Hugging Face returned invalid image: {e}")
+                    else:
+                        logger.warning(f"Hugging Face API failed: {resp.status_code} {resp.text[:200]}")
+            except Exception as e:
+                logger.error(f"Error calling Hugging Face API (attempt {attempt + 1}): {e}")
+            if attempt < retries:
+                await asyncio.sleep(2 ** attempt)
         return None
 
-    async def generate_pollinations_background(self, keywords: str, vertical: bool = False) -> Path:
+    async def generate_pollinations_background(self, keywords: str, vertical: bool = False, retries: int = 2) -> Path:
         """Generates background using Pollinations.ai — fully free, no API key needed.
         Uses a simple GET request with the prompt encoded in the URL."""
         import urllib.parse
@@ -168,22 +225,35 @@ class ImageGenerator:
         encoded_prompt = urllib.parse.quote(prompt)
         url = (
             f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-            f"?width={width}&height={height}&nologo=true&seed={hash(keywords) % 100000}"
+            f"?width={width}&height={height}&nologo=true&seed={abs(hash(keywords)) % 100000}&enhance=true"
         )
         
-        logger.info(f"Generating AI cover using Pollinations.ai: {prompt[:60]}...")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=60, follow_redirects=True)
-                if resp.status_code == 200 and len(resp.content) > 1000:
-                    with open(img_path, "wb") as f:
-                        f.write(resp.content)
-                    logger.info("Successfully generated background via Pollinations.ai")
-                    return img_path
-                else:
-                    logger.warning(f"Pollinations.ai failed: status={resp.status_code}, size={len(resp.content)}")
-        except Exception as e:
-            logger.error(f"Error calling Pollinations.ai: {e}")
+        for attempt in range(retries + 1):
+            logger.info(f"Generating AI cover using Pollinations.ai (attempt {attempt + 1}): {prompt[:60]}...")
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(url, timeout=60, follow_redirects=True)
+                    if resp.status_code == 200 and len(resp.content) > 5000:
+                        # Check content-type to avoid HTML error pages
+                        content_type = resp.headers.get("content-type", "").lower()
+                        if "image" in content_type or "octet-stream" in content_type:
+                            with open(img_path, "wb") as f:
+                                f.write(resp.content)
+                            try:
+                                test_img = Image.open(img_path)
+                                test_img.verify()
+                                logger.info("Successfully generated background via Pollinations.ai")
+                                return img_path
+                            except Exception as e:
+                                logger.warning(f"Pollinations.ai returned invalid image: {e}")
+                        else:
+                            logger.warning(f"Pollinations.ai returned non-image content-type: {content_type}")
+                    else:
+                        logger.warning(f"Pollinations.ai failed: status={resp.status_code}, size={len(resp.content)}")
+            except Exception as e:
+                logger.error(f"Error calling Pollinations.ai (attempt {attempt + 1}): {e}")
+            if attempt < retries:
+                await asyncio.sleep(2 ** attempt)
         return None
 
     async def generate_cloudflare_background(self, keywords: str, vertical: bool = False) -> Path:
@@ -382,24 +452,25 @@ class ImageGenerator:
         return img
 
     def create_cover(self, title: str, bg_path: Path = None, vertical: bool = False) -> Path:
-        """Creates a text-overlay cover image with the channel's unified branding style"""
+        """Creates a text-overlay cover image with the channel's unified branding style.
+        Uses robust font fallback and text stroke for guaranteed readability across all platforms."""
         width, height = (720, 1280) if vertical else (1080, 1080)
         output_name = "final_cover_v.jpg" if vertical else "final_cover.jpg"
         output_path = self.temp_dir / output_name
         
         try:
-            # Extract theme parameters
             colors = self.theme.get("colors", {})
             layout = self.theme.get("layout", {})
-            wm_config = self.theme.get("watermark", {})
+            brand_accent = tuple(self._parse_color(colors.get("brand_accent"), [217, 4, 41, 255]))
+            text_primary = tuple(self._parse_color(colors.get("text_primary"), [255, 255, 255, 255]))
+            brand_dark = self._parse_color(colors.get("brand_dark"), [13, 15, 20, 255])
             
-            # 1. Load and crop background or create procedural gradient background if failed
+            # 1. Load and crop background or create procedural fallback
             if bg_path and bg_path.exists():
                 try:
                     bg_img = Image.open(bg_path).convert("RGBA")
                     w, h = bg_img.size
                     if vertical:
-                        # Center crop to 9:16 aspect ratio
                         target_ratio = 720 / 1280
                         current_ratio = w / h
                         if current_ratio > target_ratio:
@@ -412,7 +483,6 @@ class ImageGenerator:
                             bg_img = bg_img.crop((0, top, w, top + new_h))
                         img = bg_img.resize((720, 1280), Image.Resampling.LANCZOS)
                     else:
-                        # Center crop to 1:1 square
                         min_dim = min(w, h)
                         left = (w - min_dim) // 2
                         top = (h - min_dim) // 2
@@ -424,38 +494,28 @@ class ImageGenerator:
             else:
                 img = self._generate_procedural_background(width, height, colors)
 
-            # Apply glitch to background BEFORE drawing text
+            # Apply subtle glitch to background
             img = self._apply_glitch_effect(img).convert("RGBA")
-
-            # 2. Apply dark gradient overlay to make text readable
-            gradient_img = Image.new("RGBA", (1, int(height * 0.7)))
-            dark_color = self._parse_color(colors.get("brand_dark"), [13, 15, 20, 255])
-            for y in range(gradient_img.height):
-                t = y / float(gradient_img.height)
-                # Exponential gradient for smoother fade
-                alpha = int(255 * (t ** 1.5))
-                gradient_img.putpixel((0, y), (dark_color[0], dark_color[1], dark_color[2], alpha))
-                
-            overlay = gradient_img.resize((width, height), Image.Resampling.BILINEAR)
-            # Paste gradient at the bottom
-            temp_overlay = Image.new("RGBA", img.size)
-            temp_overlay.paste(overlay, (0, int(height * 0.3)))
-            img = Image.alpha_composite(img, temp_overlay)
             draw = ImageDraw.Draw(img)
- 
-            # 3. Draw minimalist HUD decorative elements
-            brand_accent = tuple(self._parse_color(colors.get("brand_accent"), [217, 4, 41, 255]))
-            
-            # Subtle inner border (thin line, 1px, low opacity)
+
+            # 2. Strong dark vignette gradient from bottom for text readability
+            overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            for y in range(height):
+                # Stronger fade at bottom (80% opacity at bottom, 0% at top 30%)
+                t = max(0, (y - int(height * 0.3)) / (height * 0.7))
+                alpha = int(200 * (t ** 1.2))
+                overlay_draw.line([(0, y), (width, y)], fill=(brand_dark[0], brand_dark[1], brand_dark[2], alpha), width=1)
+            img = Image.alpha_composite(img, overlay)
+            draw = ImageDraw.Draw(img)
+
+            # 3. Minimalist HUD decorative elements
+            # Subtle inner border
             offset = 24
             border_color = (255, 255, 255, 20)
-            draw.rectangle(
-                [offset, offset, width - offset, height - offset],
-                outline=border_color,
-                width=1
-            )
+            draw.rectangle([offset, offset, width - offset, height - offset], outline=border_color, width=1)
             
-            # Corner L-brackets (crop marks) in accent color
+            # Corner L-brackets in accent color
             bracket_len = 20
             bracket_offset = 20
             # Top-Left
@@ -471,55 +531,33 @@ class ImageGenerator:
             draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset - bracket_len, height - bracket_offset)], fill=brand_accent, width=2)
             draw.line([(width - bracket_offset, height - bracket_offset), (width - bracket_offset, height - bracket_offset - bracket_len)], fill=brand_accent, width=2)
 
-            # 4. Tech graphics and minimalist channel badge
-            self._draw_tech_graphics(draw, width, height, colors)
-            
-            # Subtle top-center brand badge (fully graphic-themed, no raw game/patch text)
+            # 4. Top-center brand badge
             badge_text = self.theme.get("badge_text", "// NEUROSOFT GAMING //")
-            badge_font_size = 20
-            if self.font_path and self.font_path.exists():
-                badge_font = ImageFont.truetype(str(self.font_path), badge_font_size)
-            else:
-                try:
-                    badge_font = ImageFont.load_default(size=badge_font_size)
-                except TypeError:
-                    badge_font = ImageFont.load_default()
-            
+            badge_font = self._get_font(20)
             try:
                 badge_w = badge_font.getlength(badge_text)
             except AttributeError:
                 badge_w = len(badge_text) * 11
-                
-            draw.text(
-                ((width - badge_w) // 2, 40),
-                badge_text,
-                font=badge_font,
-                fill=(255, 255, 255, 60) # semi-transparent white
-            )
-
-            # 5. Headline Text Rendering
-            text_color = tuple(self._parse_color(colors.get("text_primary"), [255, 255, 255, 255]))
-            font_size = layout.get("font_size_vertical", 42) if vertical else layout.get("font_size_square", 56)
+            draw.text(((width - badge_w) // 2, 40), badge_text, font=badge_font, fill=(255, 255, 255, 60))
             
-            if self.font_path and self.font_path.exists():
-                font = ImageFont.truetype(str(self.font_path), font_size)
-            else:
-                try:
-                    font = ImageFont.load_default(size=font_size)
-                except TypeError:
-                    font = ImageFont.load_default()
- 
+            # Top accent line with dot
+            line_w = int(width * 0.25)
+            line_x = (width - line_w) // 2
+            draw.line([(line_x, 60), (line_x + line_w, 60)], fill=(255, 255, 255, 30), width=1)
+            cx = width // 2
+            draw.ellipse([cx - 2, 58, cx + 2, 62], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80))
+
+            # 5. Headline Text Rendering with robust font
+            font_size = layout.get("font_size_vertical", 48) if vertical else layout.get("font_size_square", 62)
+            font = self._get_font(font_size)
             wrap_w = layout.get("wrap_width_vertical", 600) if vertical else layout.get("wrap_width_square", 900)
             
-            import re
             clean_title = re.sub(r'<[^>]+>', '', title)
             clean_title = "".join(c for c in clean_title if ord(c) < 0x10000 and c not in '\ufeff\ufffe')
             clean_title = re.sub(r'\s+', ' ', clean_title).strip()
             
-            # Remove anything that looks like body text accidentally appended to title
-            # If there's a strong separator or newline that was flattened, or if it's too long
+            # Truncate long titles
             if len(clean_title) > 65:
-                # Try to cut at punctuation
                 match = re.search(r'([.!?])\s+[А-ЯA-Z]', clean_title)
                 if match and match.start() < 65:
                     clean_title = clean_title[:match.start() + 1]
@@ -528,55 +566,72 @@ class ImageGenerator:
             
             wrapped_lines = self._wrap_text(clean_title, font, wrap_w)
             
-            # Position text at the bottom
-            total_text_height = len(wrapped_lines) * (font_size + 10)
-            y_start_initial = height - total_text_height - 80
-            y_start_final = height - 80
-            
+            # Position text at bottom with padding
+            line_spacing = font_size + 12
+            total_text_height = len(wrapped_lines) * line_spacing
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
-            brand_dark = self._parse_color(colors.get("brand_dark"), [13, 15, 20, 255])
             
-            # Card bounds
-            card_x1 = 24 if vertical else (pad_left - 30)
-            card_x2 = width - pad_left + 30
-            card_y1 = y_start_initial - 20
-            card_y2 = y_start_final + 20
+            # Card background for text (clean rectangle, no cut angles)
+            card_margin = 30
+            card_x1 = pad_left - card_margin
+            card_x2 = width - pad_left + card_margin
+            card_y1 = height - total_text_height - 100
+            card_y2 = height - 40
             
-            # Fill the card with a semi-transparent dark color
-            card_fill = (brand_dark[0], brand_dark[1], brand_dark[2], 200)
-            # Draw a thin border of accent color
-            card_outline = (brand_accent[0], brand_accent[1], brand_accent[2], 120)
+            # Ensure card doesn't go too high
+            if card_y1 < height * 0.5:
+                card_y1 = height * 0.5
             
-            # Draw polygon for Cyberpunk 2077 cut look (cut top-left by 15px)
-            polygon_pts = [
-                (card_x1 + 15, card_y1),
-                (card_x2, card_y1),
-                (card_x2, card_y2),
-                (card_x1, card_y2),
-                (card_x1, card_y1 + 15)
-            ]
-            draw.polygon(polygon_pts, fill=card_fill, outline=card_outline, width=1)
+            card_fill = (brand_dark[0], brand_dark[1], brand_dark[2], 180)
+            card_outline = (brand_accent[0], brand_accent[1], brand_accent[2], 100)
+            draw.rounded_rectangle([card_x1, card_y1, card_x2, card_y2], fill=card_fill, outline=card_outline, width=2, radius=12)
             
-            # Vertical neon indicator bar of the accent color to the left of the text block
-            indicator_x = card_x1 + 8
-            indicator_y1 = card_y1 + 20
-            indicator_y2 = card_y2 - 10
-            # Glow line: width 6
-            draw.line([(indicator_x, indicator_y1), (indicator_x, indicator_y2)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 60), width=6)
-            # Core line: width 2
-            draw.line([(indicator_x, indicator_y1), (indicator_x, indicator_y2)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 255), width=2)
+            # Neon indicator bar on left side of card
+            indicator_x = card_x1 + 10
+            draw.line([(indicator_x, card_y1 + 20), (indicator_x, card_y2 - 20)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80), width=6)
+            draw.line([(indicator_x, card_y1 + 20), (indicator_x, card_y2 - 20)], fill=brand_accent, width=2)
             
-            # Render the headline text lines left-aligned on the card using the Russo One font
-            y_start = y_start_initial
+            # Render text lines with stroke for readability
+            y_start = height - total_text_height - 80
+            if y_start < card_y1 + 25:
+                y_start = card_y1 + 25
+            
             for line in wrapped_lines:
-                draw.text(
-                    (pad_left, y_start),
-                    line,
-                    font=font,
-                    fill=text_color
-                )
-                y_start += font_size + 10
+                x_pos = pad_left
+                # Draw black stroke (outline) for readability against any background
+                stroke_color = (0, 0, 0, 200)
+                for dx, dy in [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2)]:
+                    draw.text((x_pos + dx, y_start + dy), line, font=font, fill=stroke_color)
+                # Draw main text
+                draw.text((x_pos, y_start), line, font=font, fill=text_primary)
+                y_start += line_spacing
             
+            # 6. Watermark at bottom
+            wm_config = self.theme.get("watermark", {})
+            wm_text_parts = wm_config.get("text_parts", [
+                {"text": "/ игры ", "color_type": "primary"},
+                {"text": "⚡", "color_type": "accent"},
+                {"text": " патчи /", "color_type": "primary"}
+            ])
+            wm_font_size = wm_config.get("font_size", 24)
+            wm_font = self._get_font(wm_font_size)
+            full_wm = "".join([p["text"] for p in wm_text_parts])
+            try:
+                wm_w = wm_font.getlength(full_wm)
+            except AttributeError:
+                wm_w = len(full_wm) * 10
+            wm_x = (width - wm_w) // 2
+            wm_y = height - 60
+            for part in wm_text_parts:
+                color_type = part.get("color_type", "primary")
+                fill = brand_accent if color_type == "accent" else text_primary
+                draw.text((wm_x, wm_y), part["text"], font=wm_font, fill=fill)
+                try:
+                    part_w = wm_font.getlength(part["text"])
+                except AttributeError:
+                    part_w = len(part["text"]) * 10
+                wm_x += part_w
+
             # Save as JPEG
             final_img = img.convert("RGB")
             final_img.save(output_path, "JPEG", quality=95)
@@ -586,6 +641,158 @@ class ImageGenerator:
         except Exception as e:
             logger.error(f"Error creating cover: {e}", exc_info=True)
             return None
+
+    def create_slide(self, caption: str, bg_path: Path = None, vertical: bool = True) -> Path:
+        """Creates a clean, vertical Reels slide with large readable text and minimal design."""
+        width, height = (720, 1280) if vertical else (1080, 1080)
+        output_name = f"slide_{hash(caption) % 100000}.jpg"
+        output_path = self.temp_dir / output_name
+
+        try:
+            colors = self.theme.get("colors", {})
+            brand_accent = tuple(self._parse_color(colors.get("brand_accent"), [217, 4, 41, 255]))
+            text_primary = tuple(self._parse_color(colors.get("text_primary"), [255, 255, 255, 255]))
+
+            # 1. Background
+            if bg_path and bg_path.exists():
+                try:
+                    bg_img = Image.open(bg_path).convert("RGBA")
+                    w, h = bg_img.size
+                    target_ratio = width / height
+                    current_ratio = w / h
+                    if current_ratio > target_ratio:
+                        new_w = int(h * target_ratio)
+                        left = (w - new_w) // 2
+                        bg_img = bg_img.crop((left, 0, left + new_w, h))
+                    else:
+                        new_h = int(w / target_ratio)
+                        top = (h - new_h) // 2
+                        bg_img = bg_img.crop((0, top, w, top + new_h))
+                    img = bg_img.resize((width, height), Image.Resampling.LANCZOS)
+                except Exception as e:
+                    logger.error(f"Failed to load background {bg_path}: {e}. Generating fallback.")
+                    img = self._generate_procedural_background(width, height, colors)
+            else:
+                img = self._generate_procedural_background(width, height, colors)
+
+            # Apply subtle glitch
+            img = self._apply_glitch_effect(img).convert("RGBA")
+            draw = ImageDraw.Draw(img)
+
+            # 2. Dark gradient overlay for text readability (top to bottom)
+            overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            for y in range(height):
+                alpha = int(120 * (y / height))
+                overlay_draw.line([(0, y), (width, y)], fill=(0, 0, 0, alpha), width=1)
+            img = Image.alpha_composite(img, overlay)
+            draw = ImageDraw.Draw(img)
+
+            # 3. Minimalist border
+            offset = 24
+            border_color = (255, 255, 255, 20)
+            draw.rectangle([offset, offset, width - offset, height - offset], outline=border_color, width=1)
+
+            # 4. Badge at top
+            badge_text = self.theme.get("badge_text", "// NEUROSOFT GAMING //")
+            badge_font_size = 18
+            badge_font = self._get_font(badge_font_size)
+            try:
+                badge_w = badge_font.getlength(badge_text)
+            except AttributeError:
+                badge_w = len(badge_text) * 9
+            draw.text(((width - badge_w) // 2, 30), badge_text, font=badge_font, fill=(255, 255, 255, 60))
+
+            # 5. Large Caption Text
+            clean_caption = re.sub(r'<[^>]+>', '', caption)
+            clean_caption = "".join(c for c in clean_caption if ord(c) < 0x10000 and c not in '\ufeff\ufffe')
+            clean_caption = re.sub(r'\s+', ' ', clean_caption).strip().upper()
+
+            # Dynamic font sizing to fit slide
+            max_font_size = 72
+            min_font_size = 36
+            font_size = max_font_size
+            wrap_w = width - 80
+            lines = []
+            while font_size >= min_font_size:
+                font = self._get_font(font_size)
+                lines = self._wrap_text(clean_caption, font, wrap_w)
+                total_h = len(lines) * (font_size + 12)
+                if total_h <= height * 0.45:
+                    break
+                font_size -= 4
+
+            total_text_height = len(lines) * (font_size + 12)
+            y_start = (height - total_text_height) // 2 + 40  # Slightly below center
+
+            # Accent line above text
+            line_w = min(width * 0.6, 400)
+            line_x = (width - line_w) // 2
+            draw.line([(line_x, y_start - 20), (line_x + line_w, y_start - 20)], fill=brand_accent, width=3)
+
+            for line in lines:
+                try:
+                    line_w_px = font.getlength(line)
+                except AttributeError:
+                    line_w_px = len(line) * font_size * 0.6
+                x_pos = (width - line_w_px) // 2
+                # Draw shadow
+                draw.text((x_pos + 2, y_start + 2), line, font=font, fill=(0, 0, 0, 180))
+                draw.text((x_pos, y_start), line, font=font, fill=text_primary)
+                y_start += font_size + 12
+
+            # Accent line below text
+            draw.line([(line_x, y_start + 10), (line_x + line_w, y_start + 10)], fill=brand_accent, width=3)
+
+            # 6. Watermark at bottom
+            wm_config = self.theme.get("watermark", {})
+            wm_text_parts = wm_config.get("text_parts", [
+                {"text": "/ игры ", "color_type": "primary"},
+                {"text": "⚡", "color_type": "accent"},
+                {"text": " патчи /", "color_type": "primary"}
+            ])
+            wm_font_size = wm_config.get("font_size", 20)
+            wm_font = self._get_font(wm_font_size)
+            full_wm = "".join([p["text"] for p in wm_text_parts])
+            try:
+                wm_w = wm_font.getlength(full_wm)
+            except AttributeError:
+                wm_w = len(full_wm) * 10
+            wm_x = (width - wm_w) // 2
+            wm_y = height - 60
+            for part in wm_text_parts:
+                color_type = part.get("color_type", "primary")
+                if color_type == "accent":
+                    fill = brand_accent
+                else:
+                    fill = text_primary
+                draw.text((wm_x, wm_y), part["text"], font=wm_font, fill=fill)
+                try:
+                    part_w = wm_font.getlength(part["text"])
+                except AttributeError:
+                    part_w = len(part["text"]) * 10
+                wm_x += part_w
+
+            final_img = img.convert("RGB")
+            final_img.save(output_path, "JPEG", quality=95)
+            logger.info(f"Slide generated successfully at {output_path}")
+            return output_path
+
+        except Exception as e:
+            logger.error(f"Error creating slide: {e}", exc_info=True)
+            return None
+
+    def _get_font(self, size: int):
+        """Returns a truetype font at the requested size, or a safe fallback."""
+        if self.font_path and self.font_path.exists():
+            try:
+                return ImageFont.truetype(str(self.font_path), size)
+            except Exception:
+                pass
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
 
     def _wrap_text(self, text: str, font, max_width: int) -> list:
         """Helper to wrap text nicely inside the cover width"""

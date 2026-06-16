@@ -1,0 +1,95 @@
+diff --git a/smm_engine/media/image_handler.py b/smm_engine/media/image_handler.py
+index a123456..b67890c 100644
+--- a/smm_engine/media/image_handler.py
++++ b/smm_engine/media/image_handler.py
+@@ -562,6 +562,72 @@ class ImageGenerator:
+                     fill=text_color
+                 )
+                 y_start += font_size + 10
++
++            # 6. Render Branded Watermark in Bottom-Right Corner (R1)
++            if wm_config:
++                wm_font_size = wm_config.get("font_size", 24)
++                if self.font_path and self.font_path.exists():
++                    wm_font = ImageFont.truetype(str(self.font_path), wm_font_size)
++                else:
++                    wm_font = ImageFont.load_default()
++
++                text_parts = wm_config.get("text_parts", [])
++                
++                # Calculate widths of text segments
++                part_widths = []
++                for part in text_parts:
++                    txt = part.get("text", "")
++                    try:
++                        w = wm_font.getlength(txt)
++                    except AttributeError:
++                        w = len(txt) * (wm_font_size * 0.5)
++                    part_widths.append(w)
++                
++                total_wm_width = sum(part_widths)
++                try:
++                    ascent, descent = wm_font.getmetrics()
++                    wm_height = ascent + descent
++                except (AttributeError, TypeError):
++                    wm_height = wm_font_size
++
++                # Align with bottom-right boundaries (inner border offset = 24)
++                x_end = width - offset - 16
++                y_end = height - offset - 16
++                
++                wm_x_start = x_end - total_wm_width
++                wm_y_start = y_end - wm_height
++                
++                # Retrieve theme-configured colors
++                watermark_text_color = tuple(colors.get("watermark_text", colors.get("text_primary", [255, 255, 255, 255])))
++                watermark_accent_color = tuple(colors.get("watermark_accent", colors.get("brand_accent", [217, 4, 41, 255])))
++                brand_dark = colors.get("brand_dark", [13, 15, 20, 255])
++                brand_accent = colors.get("brand_accent", [217, 4, 41, 255])
++                
++                # Draw semi-transparent backing box for perfect readability
++                pad_x = 12
++                pad_y = 6
++                back_x1 = wm_x_start - pad_x
++                back_y1 = wm_y_start - pad_y
++                back_x2 = x_end + pad_x
++                back_y2 = y_end + pad_y
++                
++                backing_fill = tuple(brand_dark[:3] + [180])  # ~70% opacity
++                backing_outline = tuple(brand_accent[:3] + [80])   # low opacity accent border
++                
++                try:
++                    draw.rounded_rectangle(
++                        [back_x1, back_y1, back_x2, back_y2],
++                        radius=6,
++                        fill=backing_fill,
++                        outline=backing_outline,
++                        width=1
++                    )
++                except AttributeError:
++                    draw.rectangle(
++                        [back_x1, back_y1, back_x2, back_y2],
++                        fill=backing_fill,
++                        outline=backing_outline,
++                        width=1
++                    )
++                
++                # Render the text segments
++                current_x = wm_x_start
++                for idx, part in enumerate(text_parts):
++                    txt = part.get("text", "")
++                    color_type = part.get("color_type", "primary")
++                    part_color = watermark_text_color if color_type == "primary" else watermark_accent_color
++                    
++                    draw.text(
++                        (current_x, wm_y_start),
++                        txt,
++                        font=wm_font,
++                        fill=tuple(part_color),
++                        stroke_width=1,
++                        stroke_fill=tuple(brand_dark[:3] + [255])
++                    )
++                    current_x += part_widths[idx]
+             
+             # Save as JPEG
+             final_img = img.convert("RGB")
