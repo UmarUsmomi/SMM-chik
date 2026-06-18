@@ -100,12 +100,12 @@ class ContentAdapter:
         max_length = formatting.get("max_length", 400)
         
         content_str = item.raw_data.get("content") or item.raw_data.get("description") or item.raw_data.get("summary") or ""
-        is_long = len(content_str) > 300
+        is_long = len(content_str) > 500
         import random
-        allow_blockquote = is_long and (random.random() < 0.50)
+        allow_blockquote = is_long and (random.random() < 0.60)
         
         if allow_blockquote:
-            blockquote_instruction = "- Если в новости есть яркая прямая цитата эксперта или разработчика, оформи её тегом <blockquote expandable>текст цитаты</blockquote>. Используй цитаты только при наличии реальной цитаты в источнике, не придумывай их!"
+            blockquote_instruction = "- Если в новости есть яркая прямая цитата эксперта, руководителя или разработчика, ОБЯЗАТЕЛЬНО оформи её тегом <blockquote expandable>текст цитаты</blockquote>. Цитаты делают пост живее и интереснее. Не придумывай цитаты — перефразируй реальные слова из источника."
         else:
             blockquote_instruction = "- КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать тег <blockquote> или <blockquote expandable> в этом посте. Все цитаты должны быть перефразированы простым текстом."
             

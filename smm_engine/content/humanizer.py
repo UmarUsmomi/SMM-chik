@@ -91,6 +91,12 @@ Instructions:
             if cleaned_text:
                 # Post-sanitize: remove any stray markdown artifacts that reveal AI origin
                 import re
+                # Preserve blockquote tags before sanitization
+                blockquote_pattern = r'(<blockquote[^>]*>.*?</blockquote>)'
+                blockquotes = re.findall(blockquote_pattern, cleaned_text, re.DOTALL)
+                for i, bq in enumerate(blockquotes):
+                    cleaned_text = cleaned_text.replace(bq, f'__BQ_SAVE_{i}__', 1)
+
                 # Remove markdown headers
                 cleaned_text = re.sub(r'^#{1,6}\s+', '', cleaned_text, flags=re.MULTILINE)
                 # Remove single asterisks not part of **bold**
@@ -101,6 +107,11 @@ Instructions:
                 cleaned_text = re.sub(r'\n-{3,}\n', '\n', cleaned_text)
                 # Collapse multiple spaces
                 cleaned_text = re.sub(r' +', ' ', cleaned_text)
+
+                # Restore blockquote tags
+                for i, bq in enumerate(blockquotes):
+                    cleaned_text = cleaned_text.replace(f'__BQ_SAVE_{i}__', bq, 1)
+
                 return cleaned_text.strip()
             return text
         except Exception as e:

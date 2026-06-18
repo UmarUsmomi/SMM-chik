@@ -186,24 +186,29 @@ class ImageGenerator:
             logger.info(f"Generating AI cover using Hugging Face (attempt {attempt + 1}): {prompt[:60]}...")
             try:
                 async with httpx.AsyncClient() as client:
-                    resp = await client.post(api_url, headers=headers, json=payload, timeout=45)
+                    resp = await client.post(api_url, headers=headers, json=payload, timeout=120)
                     if resp.status_code == 200:
-                        with open(img_path, "wb") as f:
-                            f.write(resp.content)
-                        # Validate image
-                        try:
-                            test_img = Image.open(img_path)
-                            test_img.verify()
-                            logger.info("Hugging Face image validated successfully")
-                            return img_path
-                        except Exception as e:
-                            logger.warning(f"Hugging Face returned invalid image: {e}")
+                        content_type = resp.headers.get("content-type", "").lower()
+                        if "image" in content_type or "octet-stream" in content_type or len(resp.content) > 10000:
+                            with open(img_path, "wb") as f:
+                                f.write(resp.content)
+                            try:
+                                test_img = Image.open(img_path)
+                                test_img.verify()
+                                logger.info("Hugging Face image validated successfully")
+                                return img_path
+                            except Exception as e:
+                                logger.warning(f"Hugging Face returned invalid image: {e}")
+                        else:
+                            logger.warning(f"Hugging Face returned non-image response: content-type={content_type}, body={resp.text[:200]}")
+                    elif resp.status_code == 503:
+                        logger.warning(f"Hugging Face model is loading (503), retrying...")
                     else:
                         logger.warning(f"Hugging Face API failed: {resp.status_code} {resp.text[:200]}")
             except Exception as e:
                 logger.error(f"Error calling Hugging Face API (attempt {attempt + 1}): {e}")
             if attempt < retries:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(5 * (attempt + 1))
         return None
 
     async def generate_pollinations_background(self, keywords: str, vertical: bool = False, retries: int = 2) -> Path:
@@ -233,7 +238,7 @@ class ImageGenerator:
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(url, timeout=60, follow_redirects=True)
-                    if resp.status_code == 200 and len(resp.content) > 5000:
+                    if resp.status_code == 200 and len(resp.content) > 1000:
                         # Check content-type to avoid HTML error pages
                         content_type = resp.headers.get("content-type", "").lower()
                         if "image" in content_type or "octet-stream" in content_type:
@@ -253,7 +258,7 @@ class ImageGenerator:
             except Exception as e:
                 logger.error(f"Error calling Pollinations.ai (attempt {attempt + 1}): {e}")
             if attempt < retries:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(3 * (attempt + 1))
         return None
 
     async def generate_cloudflare_background(self, keywords: str, vertical: bool = False) -> Path:
@@ -547,26 +552,26 @@ class ImageGenerator:
             cx = width // 2
             draw.ellipse([cx - 2, 58, cx + 2, 62], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80))
 
-            # 5. Headline Text Rendering with robust font
-            font_size = layout.get("font_size_vertical", 48) if vertical else layout.get("font_size_square", 62)
-            font = self._get_font(font_size)
+            # 5. Headline Text Rendering with robust font — dynamic sizing, NO truncation
+            base_font_size = layout.get("font_size_vertical", 48) if vertical else layout.get("font_size_square", 62)
             wrap_w = layout.get("wrap_width_vertical", 600) if vertical else layout.get("wrap_width_square", 900)
             
             clean_title = re.sub(r'<[^>]+>', '', title)
             clean_title = "".join(c for c in clean_title if ord(c) < 0x10000 and c not in '\ufeff\ufffe')
             clean_title = re.sub(r'\s+', ' ', clean_title).strip()
             
-            # Truncate long titles
-            if len(clean_title) > 65:
-                match = re.search(r'([.!?])\s+[А-ЯA-Z]', clean_title)
-                if match and match.start() < 65:
-                    clean_title = clean_title[:match.start() + 1]
-                else:
-                    clean_title = clean_title[:62].rsplit(' ', 1)[0] + "..."
+            # Dynamic font sizing: shrink font until text fits in max 5 lines and max 45% of height
+            min_font_size = 28 if vertical else 36
+            font_size = base_font_size
+            while font_size >= min_font_size:
+                font = self._get_font(font_size)
+                lines = self._wrap_text(clean_title, font, wrap_w)
+                total_h = len(lines) * (font_size + 12)
+                if len(lines) <= 5 and total_h <= (height * 0.45):
+                    break
+                font_size -= 4
             
-            wrapped_lines = self._wrap_text(clean_title, font, wrap_w)
-            
-            # Position text at bottom with padding
+            wrapped_lines = lines
             line_spacing = font_size + 12
             total_text_height = len(wrapped_lines) * line_spacing
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
@@ -640,7 +645,25 @@ class ImageGenerator:
             
         except Exception as e:
             logger.error(f"Error creating cover: {e}", exc_info=True)
-            return None
+            # EMERGENCY FALLBACK: never return None, always generate a minimal cover
+            try:
+                logger.warning("Emergency fallback cover generation...")
+                width, height = (720, 1280) if vertical else (1080, 1080)
+                img = Image.new("RGB", (width, height), (13, 15, 20))
+                draw = ImageDraw.Draw(img)
+                font = self._get_font(42)
+                safe_title = re.sub(r'<[^>]+>', '', title)[:100]
+                safe_title = "".join(c for c in safe_title if ord(c) < 0x10000)
+                lines = self._wrap_text(safe_title, font, width - 80)
+                y = (height - len(lines) * 54) // 2
+                for line in lines:
+                    draw.text((40, y), line, font=font, fill=(255, 255, 255))
+                    y += 54
+                img.save(output_path, "JPEG", quality=90)
+                return output_path
+            except Exception as e2:
+                logger.critical(f"Even emergency fallback failed: {e2}")
+                return None
 
     def create_slide(self, caption: str, bg_path: Path = None, vertical: bool = True) -> Path:
         """Creates a clean, vertical Reels slide with large readable text and minimal design."""

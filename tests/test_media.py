@@ -189,10 +189,13 @@ async def test_image_generator_pollinations(tmp_path):
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.content = b"fake_jpeg_image_data_with_sufficient_length_to_pass_validation_which_is_over_1000_bytes" * 20
+        mock_response.headers = {"content-type": "image/jpeg"}
         
         with patch("httpx.AsyncClient.get", return_value=mock_response):
-            path = await img_gen.generate_pollinations_background("test_keywords")
-            assert path is not None
+            with patch("PIL.Image.open") as mock_image_open:
+                mock_image_open.return_value.verify = MagicMock()
+                path = await img_gen.generate_pollinations_background("test_keywords")
+                assert path is not None
             assert path.exists()
             assert "bg_poll.jpg" in path.name
 
