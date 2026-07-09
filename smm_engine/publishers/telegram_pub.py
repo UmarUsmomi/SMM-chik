@@ -379,6 +379,42 @@ Keywords:"""
             words = re.findall(r'\w+', title)
             return ",".join(words[:3]) if words else "technology,gaming"
 
+    async def _generate_cover_title(self, title: str, text: str) -> str:
+        """Generates a short, punchy 2-4 word clickbait headline in UPPERCASE specifically for the cover image"""
+        prompt = f"""
+Ты — профессиональный дизайнер обложек для техно-канала.
+Твоя задача — придумать ультра-короткий и цепляющий заголовок (кликбейт-фразу из 2-4 слов) для картинки-обложки к посту.
+Этот заголовок на картинке должен быть ДРУГИМ, более коротким и интригующим, чем заголовок самого поста.
+В нем НЕ должно быть точек в конце, лишних слов (таких как "До...", "Подробнее..."), и он должен быть в UPPERCASE.
+
+Заголовок поста: {title}
+Текст поста: {text}
+
+Верни ТОЛЬКО короткую фразу на обложку (2-4 слова) на русском языке в UPPERCASE. Никаких кавычек, объяснений или знаков препинания.
+Пример:
+Пост: "В Apex Legends стартовал новый ивент" -> Обложка: "КИБЕРПАНК В APEX"
+"""
+        try:
+            from smm_engine.utils.gemini_helper import generate_content_with_retry
+            from smm_engine.config import GEMINI_MODEL
+            
+            logger.info("Generating cover title using Gemini...")
+            res = await generate_content_with_retry(
+                prompt,
+                initial_model=GEMINI_MODEL,
+                generation_config={"temperature": 0.8}
+            )
+            cleaned = res.strip().replace('"', '').replace('«', '').replace('»', '').replace('.', '').upper()
+            logger.info(f"Generated cover title: {cleaned}")
+            return cleaned
+        except Exception as e:
+            logger.error(f"Failed to generate cover title: {e}")
+            # Fallback: clean title and take first 4 words
+            import re
+            clean_t = re.sub(r'<[^>]+>', '', title)
+            words = clean_t.split()
+            return " ".join(words[:4]).upper()
+
     async def _extract_og_image(self, url: str) -> Optional[str]:
         """Fetches the news article URL and extracts the og:image or twitter:image metadata"""
         if not url or not (url.startswith("http://") or url.startswith("https://")):
@@ -448,8 +484,11 @@ Keywords:"""
                 keywords = await self._generate_visual_prompt(title, text)
                 bg_path = await img_gen.generate_ai_background(keywords)
                     
-            # 5. Render final cover using the background
-            cover_path = img_gen.create_cover(title, bg_path)
+            # 5. Generate cover title dynamically (2-4 words in UPPERCASE)
+            cover_title = await self._generate_cover_title(title, text)
+            
+            # 6. Render final cover using the background
+            cover_path = img_gen.create_cover(cover_title, bg_path)
             
             if cover_path and cover_path.exists():
                 success = await self.publish_photo(title, text, str(cover_path))

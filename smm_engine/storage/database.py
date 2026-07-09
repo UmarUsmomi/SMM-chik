@@ -168,6 +168,15 @@ class DatabaseManager:
         for statement in create_table_sql.strip().split(";"):
             if statement.strip():
                 cursor.execute(statement)
+        
+        if self.use_postgres:
+            try:
+                cursor.execute("ALTER TABLE news_items ENABLE ROW LEVEL SECURITY;")
+                cursor.execute("ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;")
+                logger.info("Successfully enabled Row Level Security (RLS) on tables news_items and app_settings.")
+            except Exception as e:
+                logger.warning(f"Could not enable Row Level Security (RLS) on tables: {e}")
+
         conn.commit()
         cursor.close()
         conn.close()

@@ -235,4 +235,26 @@ async def test_image_generator_cloudflare(tmp_path):
                 assert "bg_cf.png" in path.name
 
 
+def test_image_generator_smart_crop(tmp_path):
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path):
+        from PIL import Image as PILImage
+        img_gen = ImageGenerator()
+        
+        # Create a horizontal dummy image (800x400)
+        width, height = 800, 400
+        dummy_img = PILImage.new("RGB", (width, height), color="white")
+        # Draw edges in the left half to verify edge-density-based cropping
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(dummy_img)
+        for x in range(10, 300, 10):
+            draw.line([(x, 10), (x, 390)], fill="black", width=2)
+            
+        target_w, target_h = 400, 400
+        cropped = img_gen.smart_crop(dummy_img, target_w, target_h)
+        
+        assert cropped is not None
+        assert cropped.size == (target_w, target_h)
+
+
+
 

@@ -421,7 +421,8 @@ async def test_telegram_publisher_original_image_bypass():
     
     with patch.object(ImageGenerator, "download_image", return_value=mock_path) as mock_download, \
          patch.object(ImageGenerator, "create_cover", return_value=mock_cover_path) as mock_create_cover, \
-         patch.object(pub, "publish_photo", return_value=True) as mock_publish_photo:
+         patch.object(pub, "publish_photo", return_value=True) as mock_publish_photo, \
+         patch.object(pub, "_generate_cover_title", side_effect=lambda t, txt: t) as mock_cover_title:
          
         raw_data = {"cover_image": "http://example.com/image.jpg"}
         res = await pub.publish_post_with_cover("Test Title", "Test Text", raw_data=raw_data)
@@ -446,7 +447,8 @@ async def test_telegram_publisher_original_image_bypass():
          patch.object(ImageGenerator, "generate_ai_background", return_value=mock_ai_path) as mock_gen_ai, \
          patch.object(ImageGenerator, "create_cover", return_value=mock_cover_path) as mock_create_cover, \
          patch.object(pub, "publish_photo", return_value=True) as mock_publish_photo, \
-         patch.object(pub, "_generate_visual_prompt", return_value="visual prompt"):
+         patch.object(pub, "_generate_visual_prompt", return_value="visual prompt") as mock_vis, \
+         patch.object(pub, "_generate_cover_title", side_effect=lambda t, txt: t) as mock_cover_title:
          
         raw_data = {"cover_image": "http://example.com/image.jpg"}
         res = await pub.publish_post_with_cover("Test Title", "Test Text", raw_data=raw_data)

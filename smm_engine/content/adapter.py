@@ -32,22 +32,27 @@ class ContentAdapter:
         # 2. Humanize Content (Pass 2)
         try:
             logger.info(f"Running humanizer on adapted content for '{item.title[:30]}...'")
-            humanized_title = await self.humanizer.humanize(adapted_raw.get("title", ""))
+            humanized_title = await self.humanizer.humanize(adapted_raw.get("title", ""), is_title=True)
             
             # Preserve blockquotes through humanizer by extracting them first
             import re
             body_raw = adapted_raw.get("body", "")
             blockquote_pattern = r'(<blockquote[^>]*>.*?</blockquote>)'
             blockquotes = re.findall(blockquote_pattern, body_raw, re.DOTALL)
-            body_without_quotes = re.sub(blockquote_pattern, '{{QUOTE_PLACEHOLDER}}', body_raw, flags=re.DOTALL)
+            
+            # Replace each with [QUOTE_0], [QUOTE_1], etc.
+            body_without_quotes = body_raw
+            for idx, bq in enumerate(blockquotes):
+                body_without_quotes = body_without_quotes.replace(bq, f'[QUOTE_{idx}]', 1)
             
             humanized_body = await self.humanizer.humanize(body_without_quotes)
             
             # Re-insert preserved blockquotes
-            for bq in blockquotes:
-                humanized_body = humanized_body.replace('{{QUOTE_PLACEHOLDER}}', bq, 1)
+            for idx, bq in enumerate(blockquotes):
+                humanized_body = humanized_body.replace(f'[QUOTE_{idx}]', bq, 1)
             # Remove any remaining placeholders if humanizer swallowed them
-            humanized_body = humanized_body.replace('{{QUOTE_PLACEHOLDER}}', '')
+            for idx in range(len(blockquotes)):
+                humanized_body = humanized_body.replace(f'[QUOTE_{idx}]', '')
             
             if '<blockquote' in body_raw and '<blockquote' not in humanized_body:
                 logger.warning(f"Blockquote was LOST during humanization for '{item.title[:30]}...'")
@@ -101,8 +106,11 @@ class ContentAdapter:
         
         content_str = item.raw_data.get("content") or item.raw_data.get("description") or item.raw_data.get("summary") or ""
         is_long = len(content_str) > 500
+        
+        # Check if content has a direct quote (in Cyrillic or Latin) to force allow it, otherwise keep random for tests
+        has_direct_quote = any(q in content_str for q in ['"', '«', '»', '“', '”'])
         import random
-        allow_blockquote = is_long and (random.random() < 0.60)
+        allow_blockquote = is_long and (has_direct_quote or (random.random() < 0.60))
         
         if allow_blockquote:
             blockquote_instruction = "- Если в новости есть яркая прямая цитата эксперта, руководителя или разработчика, ОБЯЗАТЕЛЬНО оформи её тегом <blockquote expandable>текст цитаты</blockquote>. Цитаты делают пост живее и интереснее. Не придумывай цитаты — перефразируй реальные слова из источника."

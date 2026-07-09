@@ -53,12 +53,23 @@ class TextHumanizer:
         self.model_name = HUMANIZER_MODEL
         self.enabled = bool(GEMINI_API_KEY)
 
-    async def humanize(self, text: str) -> str:
+    async def humanize(self, text: str, is_title: bool = False) -> str:
         """Runs the second pass of generation to clean the text from AI-isms"""
         if not self.enabled or not text:
             return text
 
-        prompt = f"""
+        if is_title:
+            prompt = f"""
+You are a professional editor. Your task is to clean up a tech news title, removing any AI clichés or awkward phrasing.
+Keep it extremely punchy and brief (strictly under 100 characters).
+If the input title is in UPPERCASE, keep the output in UPPERCASE.
+Do not add any body text, explanations, or meta-comments. Return ONLY the cleaned title.
+
+Input title:
+{text}
+"""
+        else:
+            prompt = f"""
 You are a professional human editor. Your task is to clean up a tech blog post from "AI-isms" (clichés, words, and styles that AI writers commonly use).
 
 Here are the 30 rules/patterns to look out for:
@@ -78,6 +89,7 @@ Instructions:
 6. Return ONLY the final cleaned text, without any explanations or meta-comments.
 7. IMPORTANT: Do NOT use `*` or `-` for bullet points. Keep the emoji bullets (e.g. 🤖 — текст) exactly as they were provided.
 8. IMPORTANT: Keep the final text strictly under 400 characters to ensure it fits social media limits. Make sure the text is logically complete and ends with a complete sentence.
+9. IMPORTANT: If you see any [QUOTE_0], [QUOTE_1], etc. placeholders in the input, you MUST preserve them exactly as they are in the output. Do not rewrite, translate, or remove them.
 """
 
         try:
@@ -85,10 +97,13 @@ Instructions:
             response_text = await generate_content_with_retry(
                 prompt,
                 initial_model=self.model_name,
-                generation_config={"temperature": 0.1}
+                generation_config={"temperature": 0.1 if not is_title else 0.3}
             )
             cleaned_text = response_text.strip()
             if cleaned_text:
+                if is_title:
+                    return cleaned_text.strip()
+                
                 # Post-sanitize: remove any stray markdown artifacts that reveal AI origin
                 import re
                 # Preserve blockquote tags before sanitization

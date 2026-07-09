@@ -474,25 +474,7 @@ class ImageGenerator:
             if bg_path and bg_path.exists():
                 try:
                     bg_img = Image.open(bg_path).convert("RGBA")
-                    w, h = bg_img.size
-                    if vertical:
-                        target_ratio = 720 / 1280
-                        current_ratio = w / h
-                        if current_ratio > target_ratio:
-                            new_w = int(h * target_ratio)
-                            left = (w - new_w) // 2
-                            bg_img = bg_img.crop((left, 0, left + new_w, h))
-                        else:
-                            new_h = int(w / target_ratio)
-                            top = (h - new_h) // 2
-                            bg_img = bg_img.crop((0, top, w, top + new_h))
-                        img = bg_img.resize((720, 1280), Image.Resampling.LANCZOS)
-                    else:
-                        min_dim = min(w, h)
-                        left = (w - min_dim) // 2
-                        top = (h - min_dim) // 2
-                        bg_img = bg_img.crop((left, top, left + min_dim, top + min_dim))
-                        img = bg_img.resize((1080, 1080), Image.Resampling.LANCZOS)
+                    img = self.smart_crop(bg_img, width, height)
                 except Exception as e:
                     logger.error(f"Failed to load background image {bg_path}: {e}. Generating fallback.")
                     img = self._generate_procedural_background(width, height, colors)
@@ -520,9 +502,9 @@ class ImageGenerator:
             border_color = (255, 255, 255, 20)
             draw.rectangle([offset, offset, width - offset, height - offset], outline=border_color, width=1)
             
-            # Corner L-brackets in accent color
+            # Corner L-brackets in accent color (aligned with border corners)
             bracket_len = 20
-            bracket_offset = 20
+            bracket_offset = 24
             # Top-Left
             draw.line([(bracket_offset, bracket_offset), (bracket_offset + bracket_len, bracket_offset)], fill=brand_accent, width=2)
             draw.line([(bracket_offset, bracket_offset), (bracket_offset, bracket_offset + bracket_len)], fill=brand_accent, width=2)
@@ -545,12 +527,12 @@ class ImageGenerator:
                 badge_w = len(badge_text) * 11
             draw.text(((width - badge_w) // 2, 40), badge_text, font=badge_font, fill=(255, 255, 255, 60))
             
-            # Top accent line with dot
+            # Top accent line with dot (separated from text to prevent overlap)
             line_w = int(width * 0.25)
             line_x = (width - line_w) // 2
-            draw.line([(line_x, 60), (line_x + line_w, 60)], fill=(255, 255, 255, 30), width=1)
+            draw.line([(line_x, 75), (line_x + line_w, 75)], fill=(255, 255, 255, 30), width=1)
             cx = width // 2
-            draw.ellipse([cx - 2, 58, cx + 2, 62], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80))
+            draw.ellipse([cx - 2, 73, cx + 2, 77], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80))
 
             # 5. Headline Text Rendering with robust font — dynamic sizing, NO truncation
             base_font_size = layout.get("font_size_vertical", 48) if vertical else layout.get("font_size_square", 62)
@@ -576,16 +558,17 @@ class ImageGenerator:
             total_text_height = len(wrapped_lines) * line_spacing
             pad_left = layout.get("padding_left_vertical", 60) if vertical else layout.get("padding_left_square", 90)
             
-            # Card background for text (clean rectangle, no cut angles)
+            # Card background for text (clean rectangle, ends above watermark)
             card_margin = 30
             card_x1 = pad_left - card_margin
             card_x2 = width - pad_left + card_margin
-            card_y1 = height - total_text_height - 100
-            card_y2 = height - 40
+            card_y2 = height - 90  # Leave space for watermark at the bottom
+            card_y1 = card_y2 - total_text_height - 40
             
             # Ensure card doesn't go too high
             if card_y1 < height * 0.5:
                 card_y1 = height * 0.5
+                card_y2 = card_y1 + total_text_height + 40
             
             card_fill = (brand_dark[0], brand_dark[1], brand_dark[2], 180)
             card_outline = (brand_accent[0], brand_accent[1], brand_accent[2], 100)
@@ -593,13 +576,11 @@ class ImageGenerator:
             
             # Neon indicator bar on left side of card
             indicator_x = card_x1 + 10
-            draw.line([(indicator_x, card_y1 + 20), (indicator_x, card_y2 - 20)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80), width=6)
-            draw.line([(indicator_x, card_y1 + 20), (indicator_x, card_y2 - 20)], fill=brand_accent, width=2)
+            draw.line([(indicator_x, card_y1 + 15), (indicator_x, card_y2 - 15)], fill=(brand_accent[0], brand_accent[1], brand_accent[2], 80), width=6)
+            draw.line([(indicator_x, card_y1 + 15), (indicator_x, card_y2 - 15)], fill=brand_accent, width=2)
             
             # Render text lines with stroke for readability
-            y_start = height - total_text_height - 80
-            if y_start < card_y1 + 25:
-                y_start = card_y1 + 25
+            y_start = card_y1 + 20
             
             for line in wrapped_lines:
                 x_pos = pad_left
@@ -626,10 +607,15 @@ class ImageGenerator:
             except AttributeError:
                 wm_w = len(full_wm) * 10
             wm_x = (width - wm_w) // 2
-            wm_y = height - 60
+            wm_y = height - 50
+            
+            # Resolve watermark colors from theme if available
+            wm_primary_color = tuple(self._parse_color(colors.get("watermark_text"), list(text_primary)))
+            wm_accent_color = tuple(self._parse_color(colors.get("watermark_accent"), list(brand_accent)))
+            
             for part in wm_text_parts:
                 color_type = part.get("color_type", "primary")
-                fill = brand_accent if color_type == "accent" else text_primary
+                fill = wm_accent_color if color_type == "accent" else wm_primary_color
                 draw.text((wm_x, wm_y), part["text"], font=wm_font, fill=fill)
                 try:
                     part_w = wm_font.getlength(part["text"])
@@ -816,6 +802,56 @@ class ImageGenerator:
             return ImageFont.load_default(size=size)
         except TypeError:
             return ImageFont.load_default()
+
+    def smart_crop(self, img: Image.Image, target_w: int, target_h: int) -> Image.Image:
+        """Intelligently crops the image by finding the region of highest visual detail/edges (saliency)."""
+        w, h = img.size
+        target_ratio = target_w / target_h
+        current_ratio = w / h
+        
+        if abs(current_ratio - target_ratio) < 0.05:
+            return img.resize((target_w, target_h), Image.Resampling.LANCZOS).convert("RGBA")
+            
+        # Convert to grayscale and apply edge detection to find the salient area
+        from PIL import ImageFilter, ImageStat
+        gray = img.convert("L")
+        edges = gray.filter(ImageFilter.FIND_EDGES)
+        
+        if current_ratio > target_ratio:
+            # Image is wider than target. We need to crop horizontally.
+            crop_h = h
+            crop_w = int(h * target_ratio)
+            
+            # Slide a window horizontally to find the max edge density
+            best_x = 0
+            max_edges = -1
+            # Step by 10 pixels to be fast
+            for x in range(0, w - crop_w + 1, 10):
+                box = (x, 0, x + crop_w, crop_h)
+                cropped_edges = edges.crop(box)
+                edge_sum = sum(ImageStat.Stat(cropped_edges).sum)
+                if edge_sum > max_edges:
+                    max_edges = edge_sum
+                    best_x = x
+            crop_box = (best_x, 0, best_x + crop_w, h)
+        else:
+            # Image is taller than target. We need to crop vertically.
+            crop_w = w
+            crop_h = int(w / target_ratio)
+            
+            # Slide a window vertically
+            best_y = 0
+            max_edges = -1
+            for y in range(0, h - crop_h + 1, 10):
+                box = (0, y, crop_w, y + crop_h)
+                cropped_edges = edges.crop(box)
+                edge_sum = sum(ImageStat.Stat(cropped_edges).sum)
+                if edge_sum > max_edges:
+                    max_edges = edge_sum
+                    best_y = y
+            crop_box = (0, best_y, w, best_y + crop_h)
+            
+        return img.crop(crop_box).resize((target_w, target_h), Image.Resampling.LANCZOS).convert("RGBA")
 
     def _wrap_text(self, text: str, font, max_width: int) -> list:
         """Helper to wrap text nicely inside the cover width"""
