@@ -36,11 +36,6 @@ class DatabaseManager:
     def __init__(self):
         self.use_postgres = bool(DATABASE_URL)
         _conn_var.set(None)
-        
-        db_key = DATABASE_URL if self.use_postgres else SQLITE_DB_PATH
-        if db_key not in DatabaseManager._initialized_dbs:
-            self._init_db()
-            DatabaseManager._initialized_dbs.add(db_key)
 
     def close_current(self):
         """Manually closes the context-cached connection if any"""
@@ -73,6 +68,9 @@ class DatabaseManager:
                 _conn_var.set(None)
 
         # 2. Establish a new connection and cache it as a proxy
+        db_key = DATABASE_URL if self.use_postgres else SQLITE_DB_PATH
+        need_init = db_key not in DatabaseManager._initialized_dbs
+        
         if self.use_postgres:
             import psycopg2
             try:
@@ -80,7 +78,6 @@ class DatabaseManager:
                 new_conn.autocommit = True  # Enable autocommit to prevent transactions from hanging open
                 proxy = ConnectionProxy(new_conn)
                 _conn_var.set(proxy)
-                return proxy
             except Exception as e:
                 logger.error("\n" + "="*80 + "\n" +
                              f"❌ DATABASE CONNECTION ERROR:\n"
@@ -98,7 +95,17 @@ class DatabaseManager:
             new_conn.isolation_level = None  # Enable autocommit for SQLite
             proxy = ConnectionProxy(new_conn)
             _conn_var.set(proxy)
-            return proxy
+
+        # 3. Lazily initialize DB if it has not been done yet
+        if need_init:
+            DatabaseManager._initialized_dbs.add(db_key)
+            try:
+                self._init_db()
+            except Exception as e:
+                DatabaseManager._initialized_dbs.remove(db_key)
+                raise e
+
+        return proxy
 
     def _init_db(self):
         """Initializes tables if they do not exist"""
