@@ -306,8 +306,67 @@ async def test_telegram_publisher_caption_split():
             assert "sendPhoto" in args_photo[0][0]
             caption = args_photo[1]["data"]["caption"]
             assert "Short Title" in caption
-            assert len(caption) <= 1024
+            assert pub._telegram_text_length(caption) <= 1024
             assert caption.endswith("...")
+
+
+@pytest.mark.asyncio
+async def test_telegram_publisher_keeps_quote_when_caption_is_truncated():
+    from unittest.mock import mock_open
+
+    pub = TelegramPublisher()
+    pub.enabled = True
+    pub.bot_token = "dummy_token"
+    pub.channel_id = "dummy_channel"
+    quote = "A quoted statement that must remain visible in the published post."
+    long_text = (
+        "Introductory detail. " * 90
+        + f"<blockquote expandable>{quote}</blockquote>"
+        + "\nClosing context. " * 30
+    )
+
+    mock_response = MagicMock(status_code=200)
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.post.return_value = mock_response
+
+    with patch("httpx.AsyncClient", return_value=mock_client), \
+         patch("builtins.open", mock_open(read_data=b"fake_image")):
+        assert await pub.publish_photo("Short Title", long_text, "fake_path.jpg")
+
+    caption = mock_client.post.call_args.kwargs["data"]["caption"]
+    assert f"<blockquote expandable>{quote}</blockquote>" in caption
+    assert pub._telegram_text_length(caption) <= 1024
+
+
+@pytest.mark.asyncio
+async def test_content_adapter_restores_quote_when_humanizer_drops_placeholder():
+    from smm_engine.content.adapter import ContentAdapter
+
+    adapter = ContentAdapter()
+    adapter.enabled = True
+    quote = "<blockquote expandable>Original quoted statement.</blockquote>"
+    item = NewsItem(
+        source="test_source",
+        source_id="quoted-item",
+        title="Quoted Title",
+        url="https://example.com/quoted",
+        raw_data={"tags": []},
+    )
+
+    with patch.object(
+        adapter,
+        "_adapt_pass",
+        new=AsyncMock(return_value={"title": "Title", "body": f"Intro. {quote}"}),
+    ), patch.object(
+        adapter.humanizer,
+        "humanize",
+        new=AsyncMock(side_effect=["Title", "Edited intro without placeholder."]),
+    ):
+        adapted = await adapter.adapt_news(item)
+
+    assert adapted is not None
+    assert quote in adapted["text"]
 
 # 10. Test HTML-aware truncation
 def test_telegram_publisher_html_aware_truncation():

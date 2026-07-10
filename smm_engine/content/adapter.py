@@ -47,10 +47,27 @@ class ContentAdapter:
             
             humanized_body = await self.humanizer.humanize(body_without_quotes)
             
-            # Re-insert preserved blockquotes
+            # Re-insert preserved blockquotes. If the model removed a marker,
+            # append the original verified quote rather than silently dropping it.
+            recovered_blockquotes = []
             for idx, bq in enumerate(blockquotes):
-                humanized_body = humanized_body.replace(f'[QUOTE_{idx}]', bq, 1)
-            # Remove any remaining placeholders if humanizer swallowed them
+                placeholder = f'[QUOTE_{idx}]'
+                if placeholder in humanized_body:
+                    humanized_body = humanized_body.replace(placeholder, bq, 1)
+                else:
+                    recovered_blockquotes.append(bq)
+
+            if recovered_blockquotes:
+                humanized_body = "\n\n".join(
+                    part for part in [humanized_body.strip(), *recovered_blockquotes] if part
+                )
+                logger.warning(
+                    "Humanizer removed quote placeholders for '%s'; restored %d original quote(s).",
+                    item.title[:30],
+                    len(recovered_blockquotes),
+                )
+
+            # Remove any duplicated placeholders left by malformed model output.
             for idx in range(len(blockquotes)):
                 humanized_body = humanized_body.replace(f'[QUOTE_{idx}]', '')
             
