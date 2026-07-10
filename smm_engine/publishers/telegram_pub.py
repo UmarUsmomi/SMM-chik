@@ -240,6 +240,100 @@ class TelegramPublisher:
             
         return "".join(result)
 
+    def _telegram_text_length(self, html_text: str) -> int:
+        """Returns Telegram's caption length after parsing HTML entities and tags."""
+        import re
+
+        visible_text = re.sub(r"<[^>]+>", "", html_text)
+        visible_text = html.unescape(visible_text)
+        return len(visible_text.encode("utf-16-le")) // 2
+
+    def _truncate_html_to_telegram_length(self, html_text: str, max_length: int) -> str:
+        """Shortens HTML without breaking tags or Telegram's UTF-16 caption limit."""
+        import re
+
+        if self._telegram_text_length(html_text) <= max_length:
+            return html_text
+
+        result = []
+        open_tags = []
+        visible_length = 0
+        position = 0
+
+        while position < len(html_text):
+            remainder = html_text[position:]
+            tag_match = re.match(r"<[^>]+>", remainder)
+            entity_match = re.match(r"&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);", remainder)
+
+            if tag_match:
+                tag = tag_match.group(0)
+                normalized_tag = tag.strip().lower()
+                name_match = re.match(r"</?([a-zA-Z0-9-]+)", normalized_tag)
+                name = name_match.group(1) if name_match else ""
+
+                if normalized_tag.startswith("</"):
+                    if open_tags and open_tags[-1] == name:
+                        open_tags.pop()
+                elif not normalized_tag.endswith("/>") and name:
+                    open_tags.append(name)
+
+                result.append(tag)
+                position += len(tag)
+                continue
+
+            token = entity_match.group(0) if entity_match else html_text[position]
+            token_length = len(html.unescape(token).encode("utf-16-le")) // 2
+            if visible_length + token_length + 3 > max_length:
+                break
+
+            result.append(token)
+            visible_length += token_length
+            position += len(token)
+
+        if position < len(html_text):
+            result.append("...")
+
+        result.extend(f"</{tag}>" for tag in reversed(open_tags))
+        return "".join(result)
+
+    def _build_photo_caption(self, title: str, text: str) -> str:
+        """Builds a valid photo caption while preserving complete quote blocks."""
+        import re
+
+        formatted_title = f"<b>{self._escape_html(title)}</b>"
+        formatted_text = self._format_markdown_to_html(text)
+        caption = f"{formatted_title}\n\n{formatted_text}"
+        if self._telegram_text_length(caption) <= 1024:
+            return caption
+
+        quote_pattern = r"<blockquote(?:\s+[^>]*)?>.*?</blockquote>"
+        quotes = re.findall(quote_pattern, formatted_text, flags=re.IGNORECASE | re.DOTALL)
+        if not quotes:
+            return self._truncate_html_to_telegram_length(caption, 1024)
+
+        quote_section = "\n\n".join(quotes)
+        title_and_quote = f"{formatted_title}\n\n{quote_section}"
+        if self._telegram_text_length(title_and_quote) > 1024:
+            logger.warning("Quote exceeds Telegram's caption limit and will be shortened.")
+            return self._truncate_html_to_telegram_length(title_and_quote, 1024)
+
+        body_without_quotes = re.sub(
+            quote_pattern,
+            "",
+            formatted_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        ).strip()
+        available_body_length = 1024 - self._telegram_text_length(title_and_quote) - 2
+        shortened_body = (
+            self._truncate_html_to_telegram_length(body_without_quotes, available_body_length)
+            if available_body_length > 3 and body_without_quotes
+            else ""
+        )
+
+        if shortened_body:
+            return f"{formatted_title}\n\n{shortened_body}\n\n{quote_section}"
+        return title_and_quote
+
     async def publish_text(self, title: str, text: str) -> bool:
         """Publishes a text post to the Telegram channel"""
         if not self.enabled:
@@ -278,35 +372,11 @@ class TelegramPublisher:
             logger.info(f"[DRY-RUN] Publishing photo post:\nTitle: {title}\nPhoto: {photo_url_or_path}\nText:\n{text}")
             return True
 
-        formatted_title = f"<b>{self._escape_html(title)}</b>"
-        formatted_text = self._format_markdown_to_html(text)
-        caption = f"{formatted_title}\n\n{formatted_text}"
-        
-        # Telegram photo caption limit is 1024 chars. Truncate text if too long.
-        # Leave a safety margin of 100 characters for title formatting, emojis, newlines and platform differences.
-        max_caption_len = 1024 - 100
-        
-        # Calculate UTF-16 length for the title (Telegram counts UTF-16 code units)
-        title_len_utf16 = len(formatted_title.encode('utf-16-le')) // 2
-        max_raw_text_len = max_caption_len - title_len_utf16 - 2 # 2 for newlines
-        if max_raw_text_len < 50:
-            max_raw_text_len = 100  # Fallback minimum
-            
-        # Calculate UTF-16 length for the whole caption
-        caption_len_utf16 = len(caption.encode('utf-16-le')) // 2
-        
-        if caption_len_utf16 > max_caption_len:
-            logger.warning(f"Caption too long (UTF-16: {caption_len_utf16} chars). Truncating to fit {max_caption_len} limit.")
-            
-            # Iteratively truncate until the UTF-16 length is within limits
-            # Start with max_raw_text_len and reduce if needed due to emojis in text
-            current_max = max_raw_text_len
-            while current_max > 50:
-                formatted_text = self._truncate_html(self._format_markdown_to_html(text), current_max)
-                caption = f"{formatted_title}\n\n{formatted_text}"
-                if len(caption.encode('utf-16-le')) // 2 <= max_caption_len:
-                    break
-                current_max -= 50
+        caption = self._build_photo_caption(title, text)
+        caption_length = self._telegram_text_length(caption)
+        if caption_length > 1024:
+            logger.error("Unable to compose a Telegram caption within the 1024-character limit.")
+            return False
 
         url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
         
@@ -509,5 +579,4 @@ Keywords:"""
             logger.error(f"Failed to publish post with cover, falling back to text: {e}")
             
         return await self.publish_text(title, text)
-
 
