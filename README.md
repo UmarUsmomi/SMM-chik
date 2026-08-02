@@ -22,13 +22,29 @@
 
 ---
 
-## 🚀 Быстрый запуск в 1 клик
+## 🚀 Production на Render
 
-Вы можете мгновенно развернуть SMM Автоматизатор на платформе Render:
+Рабочее окружение проекта разворачивается как Python Web Service на бесплатном инстансе
+Render. Команда сборки — `pip install -r requirements.txt`, команда запуска берётся из
+`Procfile`, а health-check должен указывать на `/readyz`.
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+Обязательная production-конфигурация:
 
-*(Вам нужно будет указать переменные окружения `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHANNEL_ID` в панели управления Render).*
+| Переменная | Назначение |
+| --- | --- |
+| `ENVIRONMENT=production` | Включает fail-closed проверки безопасности. |
+| `DATABASE_URL` | PostgreSQL для долговременного хранения; локальный SQLite на Render недолговечен. |
+| `GEMINI_API_KEY` | Доступ к генерации и оценке контента. |
+| `TELEGRAM_BOT_TOKEN` | Токен управляющего Telegram-бота. |
+| `TELEGRAM_CHANNEL_ID` | Канал публикации. |
+| `TELEGRAM_WEBHOOK_SECRET` | Длинный случайный секрет доставки Telegram webhook. |
+| `DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD` | Basic Auth панели; без них production-панель недоступна. |
+| `TELEGRAM_ADMIN_CHAT_ID` | Числовой ID единственного оператора бота; обязателен в production. |
+| `SCHEDULER_ENABLED=false` | Не допускает двойные публикации, пока расписание выполняет GitHub Actions. |
+
+Секреты задаются только в Render/GitHub и не сохраняются в репозитории. Публичный
+`/healthz` проверяет процесс, а `/readyz` — подключение к БД и полноту критической
+production-конфигурации; все административные страницы и API защищены.
 
 ---
 
@@ -38,12 +54,13 @@
 ```bash
 git clone https://github.com/UmarUsmomi/SMM-chik.git
 cd SMM-chik
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ### Шаг 2: Настройка конфигурации
-Создайте файл `.env` в корневой папке проекта:
+Скопируйте `.env.example` в `.env` и заполните только нужные локальные значения:
 ```ini
+ENVIRONMENT=development
 GEMINI_API_KEY="ваш_ключ_gemini_api"
 TELEGRAM_BOT_TOKEN="токен_вашего_телеграм_бота"
 TELEGRAM_CHANNEL_ID="-100xxxxxxxxx" # ID вашего канала
@@ -56,7 +73,7 @@ TELEGRAM_CHANNEL_ID="-100xxxxxxxxx" # ID вашего канала
 ### Шаг 3: Запуск проекта
 Запустите веб-сервер и панель управления:
 ```bash
-uvicorn bot.app:app --host 0.0.0.0 --port 10000
+python scripts/run_server.py
 ```
 Откройте браузер по адресу: `http://localhost:10000` для просмотра дашборда управления.
 
@@ -114,8 +131,22 @@ watermark:
 ## 🧪 Запуск тестов
 Чтобы убедиться, что все функции работают стабильно, запустите:
 ```bash
-python -m pytest
+npm test -- -q -p no:cacheprovider
 ```
+
+Дополнительные релизные проверки:
+
+```bash
+python -m compileall -q smm_engine bot scripts
+python -m pip check
+```
+
+## ↩️ Откат релиза
+
+Перед публикацией сохраните SHA последнего рабочего коммита. Если новый деплой не
+проходит `/healthz` или `/readyz`, верните `master` отдельным `git revert <sha>`,
+отправьте revert в GitHub и дождитесь автоматического деплоя Render. Изменения этой
+версии не требуют необратимой миграции БД, поэтому данные при откате сохраняются.
 
 ---
 

@@ -7,7 +7,11 @@
     <!-- Premium Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <!-- Chart.js for premium analytics -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+        integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+        crossorigin="anonymous"
+    ></script>
     <style>
         :root {
             --bg-color: #080a10;
@@ -165,7 +169,7 @@
             flex-direction: column;
         }
 
-        .metric-card h3 {
+        .metric-title {
             font-size: 0.8rem;
             text-transform: uppercase;
             letter-spacing: 1.5px;
@@ -492,6 +496,12 @@
             background: rgba(255, 255, 255, 0.1);
         }
 
+        .controls-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+        }
+
         /* Analytics Section */
         .analytics-card {
             display: flex;
@@ -548,6 +558,95 @@
             margin-bottom: 4px;
             display: block;
         }
+
+        .archive-toggle {
+            appearance: none;
+            background: transparent;
+            border: 0;
+            color: inherit;
+            cursor: pointer;
+            display: flex;
+            font: inherit;
+            justify-content: space-between;
+            text-align: left;
+            width: 100%;
+        }
+
+        .btn:focus-visible,
+        .archive-toggle:focus-visible,
+        .switch:focus-within {
+            outline: 3px solid var(--secondary-glow);
+            outline-offset: 3px;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 1rem;
+            }
+
+            header {
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 1rem;
+                margin-bottom: 1.5rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+                line-height: 1.15;
+            }
+
+            .status-badge {
+                align-self: flex-start;
+            }
+
+            .metrics-grid {
+                gap: 1rem;
+                grid-template-columns: minmax(0, 1fr);
+                margin-bottom: 1.5rem;
+            }
+
+            .metric-card,
+            .controls-section,
+            .card {
+                border-radius: 18px;
+                padding: 1.25rem;
+            }
+
+            .controls-section {
+                align-items: stretch;
+                margin-bottom: 1.5rem;
+            }
+
+            .switch-container {
+                justify-content: space-between;
+                width: 100%;
+            }
+
+            .controls-actions {
+                display: grid;
+                gap: 0.75rem;
+                grid-template-columns: 1fr;
+                width: 100%;
+            }
+
+            .card-title,
+            .queue-header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .queue-actions {
+                display: grid;
+                grid-template-columns: 1fr;
+            }
+
+            .alert {
+                bottom: 1rem;
+                left: 1rem;
+                right: 1rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -565,31 +664,31 @@
     </header>
 
     <!-- Metrics -->
-    <section class="metrics-grid">
+    <section class="metrics-grid" aria-label="Ключевые показатели">
         <div class="metric-card">
             <div class="metric-info">
-                <h3>Новые (спарсено)</h3>
+                <span class="metric-title">Новые (спарсено)</span>
                 <div class="value" id="count-parsed">{{ stats.parsed }}</div>
             </div>
             <div class="metric-icon-box">📥</div>
         </div>
         <div class="metric-card" style="border-bottom: 2px solid rgba(235, 94, 40, 0.3);">
             <div class="metric-info">
-                <h3>В очереди</h3>
+                <span class="metric-title">В очереди</span>
                 <div class="value" id="count-pending" style="color: var(--primary-glow);">{{ stats.pending_review }}</div>
             </div>
             <div class="metric-icon-box" style="color: var(--primary-glow);">⏳</div>
         </div>
         <div class="metric-card" style="border-bottom: 2px solid rgba(16, 185, 129, 0.3);">
             <div class="metric-info">
-                <h3>Опубликовано</h3>
+                <span class="metric-title">Опубликовано</span>
                 <div class="value" id="count-published" style="color: var(--accent-green);">{{ stats.published }}</div>
             </div>
             <div class="metric-icon-box" style="color: var(--accent-green);">✅</div>
         </div>
         <div class="metric-card" style="border-bottom: 2px solid rgba(239, 68, 68, 0.3);">
             <div class="metric-info">
-                <h3>Отклонено</h3>
+                <span class="metric-title">Отклонено</span>
                 <div class="value" id="count-rejected" style="color: var(--accent-red);">{{ stats.rejected }}</div>
             </div>
             <div class="metric-icon-box" style="color: var(--accent-red);">❌</div>
@@ -599,15 +698,15 @@
     <!-- Controls -->
     <section class="controls-section">
         <div class="switch-container">
-            <span class="switch-label">Автоматическая публикация постов (85+):</span>
+            <label class="switch-label" for="pause-toggle">Автоматическая публикация постов (85+):</label>
             <label class="switch">
                 <input type="checkbox" id="pause-toggle" {% if not is_paused %}checked{% endif %}>
                 <span class="slider"></span>
             </label>
         </div>
-        <div style="display: flex; gap: 0.8rem; flex-wrap: wrap;">
-            <button class="btn btn-force" onclick="triggerPipeline()">🚀 Запустить парсер сейчас</button>
-            <button class="btn btn-secondary" onclick="clearDatabase()">🧹 Очистить базу дубликатов</button>
+        <div class="controls-actions">
+            <button type="button" class="btn btn-force" onclick="triggerPipeline()">🚀 Запустить парсер сейчас</button>
+            <button type="button" class="btn btn-secondary" onclick="clearDatabase()">🧹 Очистить базу дубликатов</button>
         </div>
     </section>
 
@@ -637,8 +736,8 @@
                             </div>
                             <div class="queue-preview">{% if item.adapted_text %}{{ item.adapted_text }}{% else %}⚠️ <i>Текст не был адаптирован из-за временных лимитов ИИ. При нажатии «Опубликовать» система автоматически сгенерирует текст поста на лету.</i>{% endif %}</div>
                             <div class="queue-actions">
-                                <button class="btn btn-approve" onclick="moderateItem({{ item.id }}, 'approve')">✅ Опубликовать</button>
-                                <button class="btn btn-reject" onclick="moderateItem({{ item.id }}, 'reject')">❌ Отклонить</button>
+                                <button type="button" class="btn btn-approve" onclick="moderateItem({{ item.id }}, 'approve')">✅ Опубликовать</button>
+                                <button type="button" class="btn btn-reject" onclick="moderateItem({{ item.id }}, 'reject')">❌ Отклонить</button>
                             </div>
                         </div>
                     {% endfor %}
@@ -650,16 +749,18 @@
         <section class="card analytics-card">
             <h2 class="card-title">📈 Статистика канала</h2>
             <div class="chart-wrapper">
-                <canvas id="metricsChart"></canvas>
+                <canvas id="metricsChart" role="img" aria-label="Количество публикаций по дням"></canvas>
             </div>
         </section>
     </div>
 
     <!-- Rejected Items Archive -->
     <section class="card" style="margin-top: 2rem;">
-        <h2 class="card-title" style="cursor: pointer; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;" onclick="toggleArchive()">
-            <span>📁 Архив отсеянных новостей <span style="font-size: 0.95rem; color: var(--text-muted); font-weight: normal; margin-left: 0.5rem;">(Последние 10 отклонённых AI)</span></span>
-            <span id="archive-toggle-icon" style="transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); font-size: 0.85rem; color: var(--text-muted);">▼</span>
+        <h2 class="card-title" style="margin-bottom: 0;">
+            <button type="button" class="archive-toggle" aria-expanded="false" aria-controls="archive-content" onclick="toggleArchive(this)">
+                <span>📁 Архив отсеянных новостей <span style="font-size: 0.95rem; color: var(--text-muted); font-weight: normal; margin-left: 0.5rem;">(Последние 10 отклонённых AI)</span></span>
+                <span id="archive-toggle-icon" aria-hidden="true" style="transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); font-size: 0.85rem; color: var(--text-muted);">▼</span>
+            </button>
         </h2>
         
         <div id="archive-content" style="display: none; margin-top: 1.8rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
@@ -679,7 +780,10 @@
                                 <span>Причина отсева: <strong style="color: #ffb703;">{{ item.score_reason }}</strong></span>
                             </div>
                             {% if item.url %}
-                                <div style="margin-top: 0.5rem;"><a href="{{ item.url }}" target="_blank" style="color: var(--secondary-glow); font-size: 0.85rem; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">🔗 Ссылка на источник</a></div>
+                            {% set safe_url = item.url | safe_external_url %}
+                            {% if safe_url %}
+                            <div style="margin-top: 0.5rem;"><a href="{{ safe_url }}" target="_blank" rel="noopener noreferrer" style="color: var(--secondary-glow); font-size: 0.85rem; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">🔗 Ссылка на источник</a></div>
+                            {% endif %}
                             {% endif %}
                         </div>
                     {% endfor %}
@@ -695,7 +799,7 @@
     </section>
 </div>
 
-<div class="alert" id="toast">Действие выполнено успешно!</div>
+<div class="alert" id="toast" role="status" aria-live="polite">Действие выполнено успешно!</div>
 
 <script>
     // Toast notifications
@@ -752,6 +856,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: action })
             });
+            const result = await resp.json().catch(() => ({}));
             if (resp.ok) {
                 const element = document.getElementById(`item-${id}`);
                 if (element) {
@@ -768,20 +873,19 @@
                 
                 // Update stats counter values
                 const pendingCount = document.getElementById('count-pending');
-                const publishedCount = document.getElementById('count-published');
                 const rejectedCount = document.getElementById('count-rejected');
                 
                 pendingCount.innerText = Math.max(0, parseInt(pendingCount.innerText) - 1);
-                if (action === 'approve') {
-                    publishedCount.innerText = parseInt(publishedCount.innerText) + 1;
-                    showToast("Пост успешно опубликован!", "success");
-                } else {
+                if (result.action === 'publishing_started') {
+                    showToast("Публикация запущена. Результат появится в журнале.", "info");
+                } else if (result.action === 'rejected') {
                     rejectedCount.innerText = parseInt(rejectedCount.innerText) + 1;
                     showToast("Пост отклонен.", "info");
+                } else {
+                    showToast("Действие уже было выполнено.", "info");
                 }
             } else {
-                const errData = await resp.json().catch(() => ({}));
-                const errMsg = errData.detail || "Не удалось завершить операцию";
+                const errMsg = result.detail || "Не удалось завершить операцию";
                 showToast("Ошибка: " + errMsg, "error");
             }
         } catch (err) {
@@ -794,7 +898,11 @@
     async function triggerPipeline() {
         showToast("Запуск парсинга новостей...", "info");
         try {
-            const resp = await fetch('/api/force-pipeline', { method: 'POST' });
+            const resp = await fetch('/api/force-pipeline', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirmed: true })
+            });
             if (resp.ok) {
                 showToast("Парсинг запущен в фоновом режиме!", "success");
             } else {
@@ -813,7 +921,11 @@
         }
         showToast("Очистка базы данных...", "info");
         try {
-            const resp = await fetch('/api/clear-db', { method: 'POST' });
+            const resp = await fetch('/api/clear-db', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirmed: true })
+            });
             if (resp.ok) {
                 showToast("База данных успешно очищена!", "success");
                 setTimeout(() => window.location.reload(), 1000);
@@ -826,15 +938,17 @@
         }
     }
 
-    function toggleArchive() {
+    function toggleArchive(button) {
         const content = document.getElementById('archive-content');
         const icon = document.getElementById('archive-toggle-icon');
         if (content.style.display === 'none') {
             content.style.display = 'block';
             icon.style.transform = 'rotate(180deg)';
+            button.setAttribute('aria-expanded', 'true');
         } else {
             content.style.display = 'none';
             icon.style.transform = 'rotate(0deg)';
+            button.setAttribute('aria-expanded', 'false');
         }
     }
 
@@ -892,15 +1006,22 @@
                 const container = document.getElementById('terminal-logs');
                 if (data.logs && data.logs.length > 0) {
                     const isScrolledToBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 30;
-                    
-                    container.innerHTML = data.logs.map(log => {
+
+                    const fragment = document.createDocumentFragment();
+                    data.logs.forEach(log => {
                         let color = '#f4f5f6';
                         if (log.includes(' - ERROR - ')) color = 'var(--accent-red)';
                         else if (log.includes(' - WARNING - ')) color = '#ffb703';
                         else if (log.includes(' - INFO - ')) color = '#00f5d4';
-                        return `<span class="log-line" style="color: ${color};">${log}</span>`;
-                    }).join('');
-                    
+
+                        const logLine = document.createElement('span');
+                        logLine.className = 'log-line';
+                        logLine.style.color = color;
+                        logLine.textContent = log;
+                        fragment.appendChild(logLine);
+                    });
+                    container.replaceChildren(fragment);
+
                     if (isScrolledToBottom) {
                         container.scrollTop = container.scrollHeight;
                     }

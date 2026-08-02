@@ -1,5 +1,6 @@
 import pytest
 import os
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -44,6 +45,50 @@ def test_image_generator_watermark(tmp_path):
         from PIL import Image
         img = Image.open(output_path)
         assert img.size == (1080, 1080)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_image_generators_use_isolated_download_paths(tmp_path):
+    from PIL import Image as PILImage
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), color="navy").save(buffer, format="PNG")
+    response = MagicMock(status_code=200, content=buffer.getvalue())
+
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path), patch(
+        "smm_engine.media.image_handler.fetch_public_http",
+        new=AsyncMock(return_value=response),
+    ):
+        first_generator = ImageGenerator()
+        second_generator = ImageGenerator()
+        first_path = await first_generator.download_image("https://example.com/one.png")
+        second_path = await second_generator.download_image("https://example.com/two.png")
+
+    assert first_path is not None
+    assert second_path is not None
+    assert first_path != second_path
+    assert first_path.exists()
+    assert second_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_download_image_rejects_excessive_pixel_dimensions(tmp_path):
+    response = MagicMock(status_code=200, content=b"image-bytes")
+    oversized_image = MagicMock()
+    oversized_image.size = (100_000, 100_000)
+    image_context = MagicMock()
+    image_context.__enter__.return_value = oversized_image
+    image_context.__exit__.return_value = False
+
+    with patch("smm_engine.media.image_handler.BASE_DIR", tmp_path), patch(
+        "smm_engine.media.image_handler.fetch_public_http",
+        new=AsyncMock(return_value=response),
+    ), patch("smm_engine.media.image_handler.Image.open", return_value=image_context):
+        generator = ImageGenerator()
+        path = await generator.download_image("https://example.com/oversized.png")
+
+    assert path is None
+    assert not list((tmp_path / "temp_media").glob("*_bg_downloaded.jpg"))
 
 @pytest.mark.asyncio
 async def test_qr_code_generator(tmp_path):

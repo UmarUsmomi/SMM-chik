@@ -7,6 +7,43 @@ from smm_engine.scrapers.base import BaseScraper, NewsItem
 from smm_engine.utils.gemini_helper import generate_content_with_retry
 from google.api_core.exceptions import ResourceExhausted
 
+
+@pytest.mark.asyncio
+async def test_telegram_publish_failure_does_not_log_provider_body(caplog):
+    marker = "private-telegram-response-marker"
+    response = MagicMock(status_code=400, text=marker)
+    mocked_client = AsyncMock()
+    mocked_client.post.return_value = response
+    mocked_context = MagicMock()
+    mocked_context.__aenter__ = AsyncMock(return_value=mocked_client)
+    mocked_context.__aexit__ = AsyncMock(return_value=False)
+    caplog.set_level("ERROR", logger="smm_engine.publishers.telegram_pub")
+
+    with patch("smm_engine.publishers.telegram_pub.TELEGRAM_BOT_TOKEN", "token"), patch(
+        "smm_engine.publishers.telegram_pub.TELEGRAM_CHANNEL_ID", "channel"
+    ), patch("httpx.AsyncClient", return_value=mocked_context):
+        publisher = TelegramPublisher()
+        success = await publisher.publish_text("Title", "Text")
+
+    assert success is False
+    assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_telegram_publisher_fails_closed_when_production_credentials_are_missing(
+    monkeypatch,
+):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+
+    with patch("smm_engine.publishers.telegram_pub.TELEGRAM_BOT_TOKEN", None), patch(
+        "smm_engine.publishers.telegram_pub.TELEGRAM_CHANNEL_ID", None
+    ):
+        publisher = TelegramPublisher()
+
+    assert await publisher.publish_text("Title", "Text") is False
+
+
 # 1. Test HTML formatting & whitelisting in Telegram Publisher
 def test_telegram_html_formatting_whitelist():
     pub = TelegramPublisher()
@@ -222,7 +259,30 @@ async def test_telegram_publisher_visual_prompt():
              assert keywords == "quantum computer, processor, laboratory"
              mock_generate.assert_called_once()
 
-# 8. Test Database clearing and bot reset command
+# 8. Test Database indexes, clearing, and bot reset command
+def test_database_creates_indexes_for_dashboard_and_dedup_queries(tmp_path):
+    import sqlite3
+
+    from smm_engine.storage.database import DatabaseManager
+
+    database_path = tmp_path / "indexed.db"
+    with patch("smm_engine.storage.database.SQLITE_DB_PATH", str(database_path)):
+        manager = DatabaseManager()
+        manager.get_stats()
+        manager.close_current()
+
+    with sqlite3.connect(database_path) as connection:
+        index_names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
+
+    assert "idx_news_items_url" in index_names
+    assert "idx_news_items_status_score_created" in index_names
+
+
 def test_database_clear_and_reset_command(tmp_path):
     from smm_engine.storage.database import DatabaseManager
     from bot.app import app
@@ -248,11 +308,17 @@ def test_database_clear_and_reset_command(tmp_path):
         # Test endpoint with FastAPI TestClient
         with patch("bot.app.db", db_mgr):
             client = TestClient(app)
-            resp = client.post("/api/clear-db")
+            resp = client.post("/api/clear-db", json={"confirmed": True})
             assert resp.status_code == 200
             assert resp.json() == {"status": "ok", "message": "Database cleared"}
             assert len(db_mgr.get_recent_items()) == 0
-            
+
+            db_mgr.save_news_item("test_src", "id_2", "Title 2", "https://url.com/2", {})
+            resp = client.post("/api/clear-db")
+            assert resp.status_code == 422
+            assert len(db_mgr.get_recent_items()) == 1
+            db_mgr.clear_all_news()
+
             # Test Telegram Bot webhook reset command
             db_mgr.save_news_item("test_src", "id_1", "Title 1", "https://url.com/1", {})
             assert len(db_mgr.get_recent_items()) == 1
@@ -267,6 +333,15 @@ def test_database_clear_and_reset_command(tmp_path):
                         "text": "/reset"
                     }
                 }
+                resp = client.post("/webhook", json=payload)
+                assert resp.status_code == 200
+                mock_send.assert_called_once()
+                assert "подтвержд" in mock_send.call_args[0][1].lower()
+                assert len(db_mgr.get_recent_items()) == 1
+
+                mock_send.reset_mock()
+                payload["update_id"] = 2001
+                payload["message"]["text"] = "/reset CONFIRM"
                 resp = client.post("/webhook", json=payload)
                 assert resp.status_code == 200
                 mock_send.assert_called_once()

@@ -4,8 +4,8 @@ from smm_engine.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 from smm_engine.publishers.telegram_pub import TelegramPublisher
 
 async def main():
-    print(f"BOT_TOKEN: {TELEGRAM_BOT_TOKEN}")
-    print(f"CHANNEL_ID: {TELEGRAM_CHANNEL_ID}")
+    print(f"BOT_TOKEN configured: {bool(TELEGRAM_BOT_TOKEN)}")
+    print(f"CHANNEL_ID configured: {bool(TELEGRAM_CHANNEL_ID)}")
     
     pub = TelegramPublisher()
     title = "Test Bold Title 🚀"

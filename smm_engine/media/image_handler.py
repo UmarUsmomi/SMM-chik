@@ -1,24 +1,32 @@
-import os
 import httpx
 import logging
 import yaml
 import asyncio
 import re
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from typing import Optional, Any
+from uuid import uuid4
 from smm_engine.config import BASE_DIR
+from smm_engine.utils.network import fetch_public_http
 
 logger = logging.getLogger(__name__)
+
+MAX_DOWNLOADED_IMAGE_PIXELS = 40_000_000
 
 class ImageGenerator:
     def __init__(self):
         self.temp_dir = BASE_DIR / "temp_media"
         self.temp_dir.mkdir(exist_ok=True)
+        self.artifact_prefix = uuid4().hex
         # Choose a basic font path or download one
         self.font_path = self._setup_font()
         # Load active theme configuration
         self.theme = self._load_theme()
+
+    def _temp_path(self, filename: str) -> Path:
+        """Return a task-isolated path so concurrent publications cannot collide."""
+        return self.temp_dir / f"{self.artifact_prefix}_{filename}"
 
     def _parse_color(self, color_val: Any, default: list) -> list:
         """Parses color value from theme configuration (supporting list, tuple, and hex strings) into an RGBA list of 4 integers."""
@@ -166,7 +174,7 @@ class ImageGenerator:
         if not HUGGINGFACE_API_KEY:
             return None
             
-        img_path = self.temp_dir / ("bg_hf_v.jpg" if vertical else "bg_hf.jpg")
+        img_path = self._temp_path("bg_hf_v.jpg" if vertical else "bg_hf.jpg")
         width, height = (720, 1280) if vertical else (1080, 1080)
         clean_keywords = keywords.replace(",", " ")
         prompt = (
@@ -216,7 +224,7 @@ class ImageGenerator:
         Uses a simple GET request with the prompt encoded in the URL."""
         import urllib.parse
         
-        img_path = self.temp_dir / ("bg_poll_v.jpg" if vertical else "bg_poll.jpg")
+        img_path = self._temp_path("bg_poll_v.jpg" if vertical else "bg_poll.jpg")
         width, height = (720, 1280) if vertical else (1080, 1080)
         
         clean_keywords = keywords.replace(",", " ")
@@ -267,7 +275,7 @@ class ImageGenerator:
         if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
             return None
         
-        img_path = self.temp_dir / ("bg_cf_v.png" if vertical else "bg_cf.png")
+        img_path = self._temp_path("bg_cf_v.png" if vertical else "bg_cf.png")
         
         clean_keywords = keywords.replace(",", " ")
         prompt = (
@@ -365,27 +373,45 @@ class ImageGenerator:
         width, height = (720, 1280) if vertical else (1080, 1080)
         colors = self.theme.get("colors", {})
         img = self._generate_procedural_background(width, height, colors)
-        fallback_path = self.temp_dir / ("procedural_fallback_v.jpg" if vertical else "procedural_fallback.jpg")
+        fallback_path = self._temp_path(
+            "procedural_fallback_v.jpg" if vertical else "procedural_fallback.jpg"
+        )
         final_img = img.convert("RGB")
         final_img.save(fallback_path, "JPEG", quality=95)
         return fallback_path
 
     async def download_image(self, url: str) -> Optional[Path]:
         """Downloads a specific image URL to use as cover background"""
-        img_path = self.temp_dir / "bg_downloaded.jpg"
+        img_path = self._temp_path("bg_downloaded.jpg")
         try:
-            logger.info(f"Downloading news image to use as background: {url}")
+            logger.info("Downloading a validated public news image for the cover")
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=15, follow_redirects=True)
+                resp = await fetch_public_http(
+                    client,
+                    url,
+                    timeout=15,
+                    max_bytes=15 * 1024 * 1024,
+                )
                 if resp.status_code == 200:
                     with open(img_path, "wb") as f:
                         f.write(resp.content)
+
+                    with Image.open(img_path) as downloaded_image:
+                        width, height = downloaded_image.size
+                        if (
+                            width <= 0
+                            or height <= 0
+                            or width * height > MAX_DOWNLOADED_IMAGE_PIXELS
+                        ):
+                            raise ValueError("downloaded image dimensions are unsafe")
+                        downloaded_image.verify()
                     logger.info("Successfully downloaded news cover background.")
                     return img_path
                 else:
                     logger.warning(f"Failed to download news image. Status: {resp.status_code}")
         except Exception as e:
-            logger.error(f"Error downloading news background image: {e}")
+            img_path.unlink(missing_ok=True)
+            logger.warning("Rejected or failed news background image (%s)", type(e).__name__)
         return None
 
     def _apply_glitch_effect(self, img: Image.Image) -> Image.Image:
@@ -461,7 +487,7 @@ class ImageGenerator:
         Uses robust font fallback and text stroke for guaranteed readability across all platforms."""
         width, height = (720, 1280) if vertical else (1080, 1080)
         output_name = "final_cover_v.jpg" if vertical else "final_cover.jpg"
-        output_path = self.temp_dir / output_name
+        output_path = self._temp_path(output_name)
         
         try:
             colors = self.theme.get("colors", {})
@@ -655,7 +681,7 @@ class ImageGenerator:
         """Creates a clean, vertical Reels slide with large readable text and minimal design."""
         width, height = (720, 1280) if vertical else (1080, 1080)
         output_name = f"slide_{hash(caption) % 100000}.jpg"
-        output_path = self.temp_dir / output_name
+        output_path = self._temp_path(output_name)
 
         try:
             colors = self.theme.get("colors", {})

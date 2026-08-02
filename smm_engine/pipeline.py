@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, Any, List
+import os
+from typing import Any, Dict
 
 from smm_engine.config import SOURCES_CONFIG, AUTO_PUBLISH_THRESHOLD, QUEUE_THRESHOLD
 from smm_engine.storage.database import DatabaseManager
@@ -168,10 +169,23 @@ class SMMPipeline:
                             raw_data=raw_data
                         )
                         if success:
-                            # Also publish to Threads
-                            await self.threads_pub.publish_post(f"{adapted['title']}\n\n{adapted['text']}")
+                            # Persist the primary Telegram side effect before
+                            # attempting an optional secondary channel. This
+                            # prevents a Threads outage from causing a duplicate
+                            # Telegram post on the next run.
                             self.db.save_adapted_content(item_id, adapted["title"], adapted["text"], status='published')
                             self.db.mark_published(item_id)
+
+                            try:
+                                await self.threads_pub.publish_post(
+                                    f"{adapted['title']}\n\n{adapted['text']}"
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Optional Threads publish failed for item %s (%s)",
+                                    item_id,
+                                    type(exc).__name__,
+                                )
                             summary["published"] += 1
                             published_any = True
                             continue
@@ -223,9 +237,16 @@ class SMMPipeline:
         return summary
 
     async def _send_moderation_notification(self, item_id: int, original_title: str, score: int, reason: str, adapted_title: str, adapted_text: str, source: str):
-        admin_chat_id = self.db.get_setting("admin_chat_id")
+        configured_admin = (os.getenv("TELEGRAM_ADMIN_CHAT_ID") or "").strip()
+        environment = (os.getenv("ENVIRONMENT") or "").strip().lower()
+        is_production = environment in {"production", "prod"} or bool(
+            os.getenv("RENDER_EXTERNAL_URL")
+        )
+        admin_chat_id = configured_admin
+        if not admin_chat_id and not is_production:
+            admin_chat_id = self.db.get_setting("admin_chat_id")
         if not admin_chat_id:
-            logger.info("No admin_chat_id configured. Skipping Telegram moderation notification.")
+            logger.info("No trusted admin chat is configured; skipping moderation notification")
             return
 
         from smm_engine.config import TELEGRAM_BOT_TOKEN
@@ -268,6 +289,12 @@ class SMMPipeline:
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, json=payload, timeout=10)
-                logger.info(f"Sent moderation notification to admin {admin_chat_id}: {resp.status_code}")
-        except Exception as e:
-            logger.error(f"Failed to send moderation notification to admin: {e}")
+                logger.info(
+                    "Telegram moderation notification returned status %s",
+                    resp.status_code,
+                )
+        except Exception as exc:
+            logger.error(
+                "Telegram moderation notification failed (%s)",
+                type(exc).__name__,
+            )

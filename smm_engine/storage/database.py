@@ -1,4 +1,3 @@
-import os
 import json
 import sqlite3
 import contextvars
@@ -46,6 +45,18 @@ class DatabaseManager:
             except Exception:
                 pass
             _conn_var.set(None)
+
+    def ping(self) -> bool:
+        """Verify that the configured database accepts a minimal read query."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT 1")
+            row = cursor.fetchone()
+            return bool(row and row[0] == 1)
+        finally:
+            cursor.close()
+            conn.close()
 
     def _get_connection(self):
         conn = _conn_var.get()
@@ -168,6 +179,17 @@ class DatabaseManager:
         for statement in create_table_sql.strip().split(";"):
             if statement.strip():
                 cursor.execute(statement)
+
+        # Keep the two hottest read paths efficient as the history grows. These
+        # statements are supported by both SQLite and PostgreSQL and are safe to
+        # run on every fresh database initialization.
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_items_url ON news_items(url)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_news_items_status_score_created "
+            "ON news_items(status, score DESC, created_at DESC)"
+        )
         
         if self.use_postgres:
             try:
@@ -196,8 +218,6 @@ class DatabaseManager:
         """Sets an application setting"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        param_placeholder = "%s" if self.use_postgres else "?"
-        
         if self.use_postgres:
             query = """
                 INSERT INTO app_settings (key, value) VALUES (%s, %s)

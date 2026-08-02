@@ -1,13 +1,19 @@
 import logging
 import asyncio
+import ipaddress
+import json
+import os
+import secrets
+import time
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Depends, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 import httpx
-from typing import Optional
+from typing import Literal, Optional
 
 from smm_engine.config import TELEGRAM_BOT_TOKEN
 from smm_engine.storage.database import DatabaseManager
@@ -42,6 +48,29 @@ logging.getLogger().addHandler(memory_log_handler)
 
 logger = logging.getLogger("telegram_bot")
 
+
+def is_scheduler_enabled() -> bool:
+    """Keep the web-process scheduler opt-in to avoid duplicate cron runs."""
+    return (os.getenv("SCHEDULER_ENABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def build_telegram_webhook_payload(render_url: str) -> Optional[dict]:
+    """Build a webhook registration payload, failing closed in production."""
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+    if not webhook_secret and is_production_environment():
+        return None
+
+    payload = {"url": f"{render_url.rstrip('/')}/webhook"}
+    if webhook_secret:
+        payload["secret_token"] = webhook_secret
+    return payload
+
+
 async def scheduler_loop():
     """Background task to run pipeline automatically at regular intervals."""
     import os
@@ -75,8 +104,8 @@ async def scheduler_loop():
             logger.info("Scheduler: Triggering auto-pipeline run...")
             db.set_setting("last_pipeline_run", datetime.now(timezone.utc).isoformat())
             await run_pipeline_task()
-        except Exception as e:
-            logger.error(f"Scheduler: Error during pipeline execution: {e}")
+        except Exception as exc:
+            logger.error("Scheduled pipeline failed (%s)", type(exc).__name__)
             
         logger.info(f"Scheduler: Sleeping for {interval_seconds} seconds...")
         await asyncio.sleep(interval_seconds)
@@ -87,42 +116,60 @@ async def lifespan(app: FastAPI):
     import os
     render_url = os.getenv("RENDER_EXTERNAL_URL")
     if render_url and TELEGRAM_BOT_TOKEN:
-        webhook_url = f"{render_url}/webhook"
+        payload = build_telegram_webhook_payload(render_url)
         set_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
-        payload = {"url": webhook_url}
-        
-        webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-        if webhook_secret:
-            payload["secret_token"] = webhook_secret
+
+        if payload is None:
+            logger.error("Skipped Telegram webhook registration: production secret is missing")
+        else:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(set_url, json=payload, timeout=10)
+                    response_data = resp.json()
+                    if resp.is_success and response_data.get("ok"):
+                        logger.info("Telegram webhook registration succeeded")
+                    else:
+                        logger.error(
+                            "Telegram webhook registration failed with status %s",
+                            resp.status_code,
+                        )
+            except Exception as exc:
+                logger.error(
+                    "Telegram webhook registration failed (%s)",
+                    type(exc).__name__,
+                )
             
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(set_url, json=payload, timeout=10)
-                logger.info(f"Auto-setting Telegram Webhook to {webhook_url}: {resp.json()}")
-        except Exception as e:
-            logger.error(f"Failed to auto-set Telegram Webhook on startup: {e}")
-            
-    # Start Scheduler Task
-    scheduler_task = asyncio.create_task(scheduler_loop())
+    # GitHub Actions is the production scheduler. Running both schedulers can
+    # publish the same item twice because their process-local locks are separate.
+    scheduler_task = None
+    if is_scheduler_enabled():
+        scheduler_task = asyncio.create_task(scheduler_loop())
+    else:
+        logger.info("In-process scheduler is disabled; expecting an external cron runner")
     
     yield
     
     # Cancel Scheduler Task on shutdown
-    scheduler_task.cancel()
-    try:
-        await scheduler_task
-    except asyncio.CancelledError:
-        pass
+    if scheduler_task is not None:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
 
-app = FastAPI(title="SMM Automator Queue Bot", lifespan=lifespan)
-
-@app.middleware("http")
-async def db_session_middleware(request: Request, call_next):
+async def database_request_scope():
+    """Close the context-local database connection in the request task itself."""
     try:
-        response = await call_next(request)
-        return response
+        yield
     finally:
         db.close_current()
+
+
+app = FastAPI(
+    title="SMM Automator Queue Bot",
+    lifespan=lifespan,
+    dependencies=[Depends(database_request_scope)],
+)
 
 @app.middleware("http")
 async def add_security_headers_middleware(request: Request, call_next):
@@ -131,6 +178,9 @@ async def add_security_headers_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.url.path == "/" or request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     
     # Content-Security-Policy (allows local assets, fonts, CDN Chart.js)
     csp = (
@@ -139,7 +189,11 @@ async def add_security_headers_middleware(request: Request, call_next):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "
-        "connect-src 'self'"
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
     )
     response.headers["Content-Security-Policy"] = csp
     return response
@@ -148,33 +202,152 @@ db = DatabaseManager()
 publisher = TelegramPublisher()
 templates = Jinja2Templates(directory="web/templates")
 
+
+def safe_external_url(value: object) -> str:
+    """Return a browser-safe public HTTP(S) link or an empty string."""
+    if not isinstance(value, str):
+        return ""
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return ""
+
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {80, 443}
+    ):
+        return ""
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return ""
+    try:
+        if not ipaddress.ip_address(hostname).is_global:
+            return ""
+    except ValueError:
+        pass
+    return value
+
+
+templates.env.filters["safe_external_url"] = safe_external_url
+
 security = HTTPBasic(auto_error=False)
 
-def authenticate_dashboard(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
-    import os
+AUTH_FAILURE_LIMIT = 5
+AUTH_FAILURE_WINDOW_SECONDS = 300
+AUTH_FAILURE_CLIENT_LIMIT = 1000
+failed_auth_attempts: dict[str, collections.deque[float]] = {}
+
+def is_production_environment() -> bool:
+    """Return whether the service is running in a production deployment."""
+    environment = (os.getenv("ENVIRONMENT") or "").strip().lower()
+    return environment in {"production", "prod"} or bool(os.getenv("RENDER_EXTERNAL_URL"))
+
+
+PRODUCTION_REQUIRED_ENVIRONMENT = (
+    "DATABASE_URL",
+    "GEMINI_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHANNEL_ID",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "TELEGRAM_ADMIN_CHAT_ID",
+    "DASHBOARD_USERNAME",
+    "DASHBOARD_PASSWORD",
+)
+
+
+def production_configuration_ready() -> bool:
+    if not is_production_environment():
+        return True
+    return all(
+        bool((os.getenv(name) or "").strip())
+        for name in PRODUCTION_REQUIRED_ENVIRONMENT
+    )
+
+
+async def authenticate_dashboard(
+    request: Request,
+    credentials: Optional[HTTPBasicCredentials] = Depends(security),
+):
     username = os.getenv("DASHBOARD_USERNAME")
     password = os.getenv("DASHBOARD_PASSWORD")
     
-    # If not configured, bypass authentication (allow all)
+    # Local development stays convenient, but a deployed service must fail closed.
     if not username or not password:
+        if is_production_environment():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Dashboard authentication is not configured",
+            )
         return None
         
+    client_key = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    if (
+        client_key not in failed_auth_attempts
+        and len(failed_auth_attempts) >= AUTH_FAILURE_CLIENT_LIMIT
+    ):
+        failed_auth_attempts.pop(next(iter(failed_auth_attempts)))
+    recent_failures = failed_auth_attempts.setdefault(client_key, collections.deque())
+    cutoff = now - AUTH_FAILURE_WINDOW_SECONDS
+    while recent_failures and recent_failures[0] <= cutoff:
+        recent_failures.popleft()
+
+    if len(recent_failures) >= AUTH_FAILURE_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many authentication attempts",
+            headers={"Retry-After": str(AUTH_FAILURE_WINDOW_SECONDS)},
+        )
+
     if not credentials:
+        recent_failures.append(now)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Basic"},
         )
         
-    correct_username = (credentials.username == username)
-    correct_password = (credentials.password == password)
+    correct_username = secrets.compare_digest(credentials.username, username)
+    correct_password = secrets.compare_digest(credentials.password, password)
     if not (correct_username and correct_password):
+        recent_failures.append(now)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Basic"},
         )
+    failed_auth_attempts.pop(client_key, None)
     return credentials.username
+
+
+def is_authorized_telegram_chat(chat_id: int, *, allow_development_bootstrap: bool = False) -> bool:
+    """Authorize Telegram operator actions independently from webhook delivery auth."""
+    configured_admin = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+    configured_admin = configured_admin.strip() if configured_admin else ""
+
+    # Older versions let any first command overwrite the stored administrator.
+    # Production therefore trusts only an explicit environment value.
+    if is_production_environment():
+        return bool(configured_admin) and secrets.compare_digest(
+            str(chat_id),
+            configured_admin,
+        )
+
+    stored_admin = db.get_setting("admin_chat_id")
+    expected_admin = configured_admin or str(stored_admin or "").strip()
+
+    if expected_admin:
+        return secrets.compare_digest(str(chat_id), expected_admin)
+
+    if allow_development_bootstrap:
+        db.set_setting("admin_chat_id", str(chat_id))
+        logger.info("Registered the first local Telegram admin chat")
+    return True
 
 # State variables to prevent concurrent pipeline runs
 pipeline_running = False
@@ -262,12 +435,22 @@ async def publish_item_background(item_id: int, chat_id: int, message_id: int):
             raw_data=item.get("raw_data")
         )
         if success:
-            # Also publish to Threads
-            from smm_engine.publishers.threads_pub import ThreadsPublisher
-            threads_pub = ThreadsPublisher()
-            await threads_pub.publish_post(f"{title}\n\n{text}")
-            
+            # Record the primary Telegram side effect before optional channels.
+            # Otherwise a Threads outage can leave the item pending and cause a
+            # duplicate Telegram post on retry.
             db.mark_published(item_id)
+
+            try:
+                from smm_engine.publishers.threads_pub import ThreadsPublisher
+
+                threads_pub = ThreadsPublisher()
+                await threads_pub.publish_post(f"{title}\n\n{text}")
+            except Exception as exc:
+                logger.warning(
+                    "Optional Threads publish failed for item %s (%s)",
+                    item_id,
+                    type(exc).__name__,
+                )
             
             # If triggered from Telegram Bot, update the inline moderation message
             if chat_id != 0 and message_id != 0:
@@ -279,13 +462,21 @@ async def publish_item_background(item_id: int, chat_id: int, message_id: int):
         else:
             if chat_id != 0:
                 await send_bot_message(chat_id, f"❌ Ошибка при отправке сообщения в канал (ID: {item_id}).")
-    except Exception as e:
-        logger.error(f"Error in background publish: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error(
+            "Background publish failed for item %s (%s)",
+            item_id,
+            type(exc).__name__,
+        )
         if chat_id != 0:
-            await send_bot_message(chat_id, f"❌ Критическая ошибка при публикации (ID: {item_id}): {e}")
+            await send_bot_message(
+                chat_id,
+                f"❌ Внутренняя ошибка при публикации (ID: {item_id}). Проверьте журнал панели.",
+            )
     finally:
         async with publishing_lock:
             active_publishing_ids.discard(item_id)
+        db.close_current()
 
 
 
@@ -303,8 +494,8 @@ async def send_bot_message(chat_id: int, text: str, reply_markup: dict = None):
     try:
         async with httpx.AsyncClient() as client:
             await client.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"Error sending bot message: {e}")
+    except Exception as exc:
+        logger.error("Telegram message delivery failed (%s)", type(exc).__name__)
 
 async def answer_callback_query(callback_query_id: str, text: str):
     """Helper to answer inline callback query"""
@@ -316,8 +507,8 @@ async def answer_callback_query(callback_query_id: str, text: str):
     try:
         async with httpx.AsyncClient() as client:
             await client.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"Error answering callback: {e}")
+    except Exception as exc:
+        logger.error("Telegram callback answer failed (%s)", type(exc).__name__)
 
 async def edit_message_text(chat_id: int, message_id: int, text: str):
     """Helper to edit bot's message text and remove buttons"""
@@ -331,8 +522,8 @@ async def edit_message_text(chat_id: int, message_id: int, text: str):
     try:
         async with httpx.AsyncClient() as client:
             await client.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logger.error(f"Error editing message: {e}")
+    except Exception as exc:
+        logger.error("Telegram message edit failed (%s)", type(exc).__name__)
 
 async def run_pipeline_task():
     """Manually triggers the SMM pipeline in background with concurrency guard"""
@@ -347,27 +538,61 @@ async def run_pipeline_task():
         logger.info("Manual pipeline run triggered via bot...")
         pipeline = SMMPipeline()
         await pipeline.run()
-    except Exception as e:
-        logger.error(f"Error in manual pipeline execution: {e}")
+    except Exception as exc:
+        logger.error("Manual pipeline execution failed (%s)", type(exc).__name__)
     finally:
         async with pipeline_lock:
             pipeline_running = False
+        db.close_current()
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     """Main webhook endpoint for Telegram Bot Updates"""
     # 0. Check secret token if configured
-    import os
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-    if webhook_secret:
+    if not webhook_secret:
+        if is_production_environment():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Webhook authentication is not configured",
+            )
+    else:
         token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if token != webhook_secret:
+        if not token or not secrets.compare_digest(token, webhook_secret):
             logger.warning("Rejected unauthorized webhook request: invalid secret token")
             raise HTTPException(status_code=403, detail="Forbidden")
-            
+
+    content_length = request.headers.get("Content-Length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length")
+        if declared_size > 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Telegram update is too large",
+            )
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Telegram update is too large",
+            )
+
     try:
-        update = await request.json()
-        logger.info(f"Received update: {update}")
+        update = json.loads(body)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid Telegram update") from exc
+    if not isinstance(update, dict):
+        raise HTTPException(status_code=400, detail="Invalid Telegram update")
+
+    try:
+        update_type = next((key for key in ("message", "callback_query") if key in update), "other")
+        logger.info("Received Telegram update id=%s type=%s", update.get("update_id"), update_type)
         
         # 1. Handle commands/text messages
         if "message" in update:
@@ -375,10 +600,12 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
             chat_id = message["chat"]["id"]
             text = message.get("text", "")
             
-            # Auto-register admin chat ID on any command
-            if text.startswith("/"):
-                db.set_setting("admin_chat_id", str(chat_id))
-                logger.info(f"Auto-registered admin_chat_id: {chat_id}")
+            if not is_authorized_telegram_chat(
+                chat_id,
+                allow_development_bootstrap=text.startswith("/"),
+            ):
+                logger.warning("Ignored Telegram message from an unauthorized chat")
+                return {"status": "ignored"}
             
             if text == "/start":
                 welcome = (
@@ -390,7 +617,7 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                     "/resume — Включить автопубликацию (85+ сразу в канал)\n"
                     "/force — Запустить парсинг и публикацию вручную\n"
                     "/test_image — Тестировать генераторы изображений\n"
-                    "/reset — Очистить базу данных дубликатов для тестирования"
+                    "/reset — Запросить подтверждение очистки базы данных"
                 )
                 await send_bot_message(chat_id, welcome)
                 
@@ -455,6 +682,13 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                 background_tasks.add_task(run_pipeline_task)
                 
             elif text == "/clear" or text == "/reset":
+                await send_bot_message(
+                    chat_id,
+                    "<b>⚠️ Очистка удалит всю историю новостей.</b> "
+                    "Для подтверждения отправьте точную команду <code>/reset CONFIRM</code>.",
+                )
+
+            elif text == "/reset CONFIRM":
                 db.clear_all_news()
                 await send_bot_message(chat_id, "<b>🧹 База данных новостей очищена!</b> Теперь вы можете запустить <code>/force</code> для повторного парсинга и тестирования.")
                 
@@ -488,6 +722,10 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
             chat_id = cb["message"]["chat"]["id"]
             message_id = cb["message"]["message_id"]
             data = cb.get("data", "")
+
+            if not is_authorized_telegram_chat(chat_id):
+                logger.warning("Ignored Telegram callback from an unauthorized chat")
+                return {"status": "ignored"}
             
             if data.startswith("approve_"):
                 item_id = int(data.split("_")[1])
@@ -564,8 +802,8 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                         img_path = await img_gen.generate_cloudflare_background(prompt)
                     elif generator == "huggingface":
                         img_path = await img_gen.generate_hf_background(prompt)
-                except Exception as e:
-                    logger.error(f"Test image generation error: {e}")
+                except Exception as exc:
+                    logger.error("Test image generation failed (%s)", type(exc).__name__)
                 
                 if img_path and img_path.exists():
                     # Send the generated image
@@ -580,9 +818,19 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                                     timeout=45
                                 )
                                 if resp.status_code != 200:
-                                    await send_bot_message(chat_id, f"❌ Ошибка отправки: {resp.text[:200]}")
-                    except Exception as e:
-                        await send_bot_message(chat_id, f"❌ Ошибка: {e}")
+                                    await send_bot_message(
+                                        chat_id,
+                                        "❌ Telegram отклонил тестовое изображение.",
+                                    )
+                    except Exception as exc:
+                        logger.error(
+                            "Test image delivery failed (%s)",
+                            type(exc).__name__,
+                        )
+                        await send_bot_message(
+                            chat_id,
+                            "❌ Не удалось отправить тестовое изображение.",
+                        )
                     finally:
                         try:
                             img_path.unlink()
@@ -591,8 +839,10 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
                 else:
                     await send_bot_message(chat_id, f"❌ Генератор <b>{generator}</b> не смог создать изображение. Проверьте API ключи и логи.")
                 
-    except Exception as e:
-        logger.error(f"Error handling webhook: {e}", exc_info=True)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Telegram webhook handling failed (%s)", type(exc).__name__)
         
     return {"status": "ok"}
 
@@ -628,10 +878,7 @@ async def dashboard_view(request: Request, username: Optional[str] = Depends(aut
             }
         )
     except Exception as e:
-        import traceback
-        import html
-        error_details = traceback.format_exc()
-        logger.error(f"Error loading dashboard data: {e}\n{error_details}")
+        logger.error("Error loading dashboard data (%s)", type(e).__name__)
         return HTMLResponse(
             content=f"""
             <html>
@@ -665,27 +912,12 @@ async def dashboard_view(request: Request, username: Optional[str] = Depends(aut
                             transition: transform 0.2s;
                         }}
                         button:hover {{ transform: translateY(-1px); }}
-                        pre {{
-                            background: #1c2333;
-                            color: #ffb703;
-                            padding: 15px;
-                            border-radius: 8px;
-                            max-width: 85%;
-                            overflow-x: auto;
-                            font-size: 12px;
-                            margin-top: 30px;
-                            text-align: left;
-                            border-left: 4px solid #d90429;
-                            white-space: pre-wrap;
-                            word-break: break-all;
-                        }}
                     </style>
                 </head>
                 <body>
                     <h1>База данных временно недоступна</h1>
-                    <p>Похоже, к базе данных выполняется слишком много одновременных подключений из-за частых запросов парсинга. Пожалуйста, подождите 15-30 секунд и обновите страницу.</p>
+                    <p>Сервис данных временно недоступен. Пожалуйста, подождите 15-30 секунд и обновите страницу.</p>
                     <button onclick="window.location.reload()">Обновить страницу 🔄</button>
-                    <pre><b>Детали ошибки для разработчика:</b><br><br>{html.escape(error_details)}</pre>
                 </body>
             </html>
             """,
@@ -704,6 +936,10 @@ async def api_toggle_pause(req: TogglePauseReq, username: Optional[str] = Depend
 
 class ModerateReq(BaseModel):
     action: str
+
+
+class ConfirmActionReq(BaseModel):
+    confirmed: Literal[True]
 
 @app.post("/api/moderate/{item_id}")
 async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: BackgroundTasks, username: Optional[str] = Depends(authenticate_dashboard)):
@@ -728,16 +964,15 @@ async def api_moderate_item(item_id: int, req: ModerateReq, background_tasks: Ba
     raise HTTPException(status_code=400, detail="Invalid action")
 
 @app.post("/api/force-pipeline")
-async def api_force_pipeline(background_tasks: BackgroundTasks, username: Optional[str] = Depends(authenticate_dashboard)):
+async def api_force_pipeline(req: ConfirmActionReq, background_tasks: BackgroundTasks, username: Optional[str] = Depends(authenticate_dashboard)):
     """API endpoint to trigger pipeline execution"""
-    global pipeline_running
     if pipeline_running:
         raise HTTPException(status_code=409, detail="Парсинг уже запущен. Пожалуйста, подождите завершения текущего процесса.")
     background_tasks.add_task(run_pipeline_task)
     return {"status": "ok", "message": "Pipeline started"}
 
 @app.post("/api/clear-db")
-async def api_clear_db(username: Optional[str] = Depends(authenticate_dashboard)):
+async def api_clear_db(req: ConfirmActionReq, username: Optional[str] = Depends(authenticate_dashboard)):
     """API endpoint to clear database for testing duplicate re-scraping"""
     db.clear_all_news()
     return {"status": "ok", "message": "Database cleared"}
@@ -752,10 +987,14 @@ async def test_models(username: Optional[str] = Depends(authenticate_dashboard))
         genai.configure(api_key=GEMINI_API_KEY)
         models = genai.list_models()
         return {"models": [m.name for m in models]}
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as exc:
+        logger.warning("Model connectivity check failed (%s)", type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": "Model connectivity check failed"},
+        )
 
-@app.get("/api/test-telegram")
+@app.post("/api/test-telegram")
 async def test_telegram(username: Optional[str] = Depends(authenticate_dashboard)):
     import httpx
     from smm_engine.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
@@ -770,12 +1009,20 @@ async def test_telegram(username: Optional[str] = Depends(authenticate_dashboard
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, timeout=10)
-            return {
-                "status_code": resp.status_code,
-                "response": resp.json()
-            }
-    except Exception as e:
-        return {"error": str(e)}
+            response_data = resp.json()
+            if not resp.is_success or not response_data.get("ok"):
+                logger.warning("Telegram connectivity check returned status %s", resp.status_code)
+                return JSONResponse(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    content={"error": "Telegram connectivity check failed"},
+                )
+            return {"status": "ok", "status_code": resp.status_code}
+    except Exception as exc:
+        logger.warning("Telegram connectivity check failed (%s)", type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": "Telegram connectivity check failed"},
+        )
 
 
 
@@ -788,3 +1035,38 @@ def get_api_logs(username: Optional[str] = Depends(authenticate_dashboard)):
 @app.get("/healthz")
 def health_check():
     return {"status": "healthy", "service": "smm-queue-bot"}
+
+
+@app.get("/readyz")
+async def readiness_check():
+    try:
+        database_ok = db.ping()
+    except Exception as exc:
+        logger.error("Database readiness check failed (%s)", type(exc).__name__)
+        database_ok = False
+
+    if not database_ok:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unavailable",
+                "service": "smm-queue-bot",
+                "database": "error",
+            },
+        )
+
+    if not production_configuration_ready():
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unavailable",
+                "service": "smm-queue-bot",
+                "database": "ok",
+                "configuration": "error",
+            },
+        )
+
+    response = {"status": "ready", "service": "smm-queue-bot", "database": "ok"}
+    if is_production_environment():
+        response["configuration"] = "ok"
+    return response

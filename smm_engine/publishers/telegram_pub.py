@@ -1,9 +1,11 @@
 import httpx
 import logging
 import html
+import os
 from typing import Optional, Any
 
 from smm_engine.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
+from smm_engine.utils.network import fetch_public_http
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +14,15 @@ class TelegramPublisher:
         self.bot_token = TELEGRAM_BOT_TOKEN
         self.channel_id = TELEGRAM_CHANNEL_ID
         self.enabled = bool(self.bot_token and self.channel_id)
+        environment = (os.getenv("ENVIRONMENT") or "").strip().lower()
+        self.production = environment in {"production", "prod"} or bool(
+            os.getenv("RENDER_EXTERNAL_URL")
+        )
         if not self.enabled:
-            logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID is missing. Publisher will run in dry-run mode.")
+            if self.production:
+                logger.error("Telegram publisher credentials are missing in production")
+            else:
+                logger.warning("Telegram publisher credentials are missing; using local dry-run mode")
 
     def _escape_html(self, text: str) -> str:
         """Escapes text for Telegram HTML parse mode"""
@@ -337,6 +346,8 @@ class TelegramPublisher:
     async def publish_text(self, title: str, text: str) -> bool:
         """Publishes a text post to the Telegram channel"""
         if not self.enabled:
+            if self.production:
+                return False
             logger.info(f"[DRY-RUN] Publishing text post:\nTitle: {title}\nText:\n{text}")
             return True
 
@@ -360,15 +371,20 @@ class TelegramPublisher:
                     logger.info("Successfully published text post to Telegram")
                     return True
                 else:
-                    logger.error(f"Failed to publish to Telegram. Status: {resp.status_code}, Body: {resp.text}")
+                    logger.error(
+                        "Telegram text publish failed with status %s",
+                        resp.status_code,
+                    )
                     return False
-        except Exception as e:
-            logger.error(f"Error publishing to Telegram: {e}")
+        except Exception as exc:
+            logger.error("Telegram text publish failed (%s)", type(exc).__name__)
             return False
 
     async def publish_photo(self, title: str, text: str, photo_url_or_path: str) -> bool:
         """Publishes a post with a photo/cover to the Telegram channel"""
         if not self.enabled:
+            if self.production:
+                return False
             logger.info(f"[DRY-RUN] Publishing photo post:\nTitle: {title}\nPhoto: {photo_url_or_path}\nText:\n{text}")
             return True
 
@@ -406,10 +422,13 @@ class TelegramPublisher:
                     logger.info("Successfully published photo post to Telegram")
                     return True
                 else:
-                    logger.error(f"Failed to publish photo to Telegram. Status: {resp.status_code}, Body: {resp.text}")
+                    logger.error(
+                        "Telegram photo publish failed with status %s",
+                        resp.status_code,
+                    )
                     return False
-        except Exception as e:
-            logger.error(f"Error publishing photo to Telegram: {e}")
+        except Exception as exc:
+            logger.error("Telegram photo publish failed (%s)", type(exc).__name__)
             return False
 
     async def _generate_visual_prompt(self, title: str, text: str) -> str:
@@ -490,12 +509,18 @@ Keywords:"""
         if not url or not (url.startswith("http://") or url.startswith("https://")):
             return None
         try:
-            logger.info(f"Extracting og:image from news URL: {url}")
+            logger.info("Extracting og:image metadata from a news URL")
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=headers, timeout=8, follow_redirects=True)
+                resp = await fetch_public_http(
+                    client,
+                    url,
+                    headers=headers,
+                    timeout=8,
+                    max_bytes=2 * 1024 * 1024,
+                )
                 if resp.status_code == 200:
                     html_content = resp.text
                     import re
@@ -511,10 +536,10 @@ Keywords:"""
                         elif img_url.startswith("/"):
                             from urllib.parse import urljoin
                             img_url = urljoin(url, img_url)
-                        logger.info(f"Extracted image URL: {img_url}")
+                        logger.info("Extracted an image URL from news metadata")
                         return img_url
         except Exception as e:
-            logger.warning(f"Failed to parse og:image from page {url}: {e}")
+            logger.warning("Failed to parse og:image metadata (%s)", type(e).__name__)
         return None
 
     async def publish_post_with_cover(self, title: str, text: str, news_item_url: Optional[str] = None, raw_data: Optional[Any] = None) -> bool:
@@ -579,4 +604,3 @@ Keywords:"""
             logger.error(f"Failed to publish post with cover, falling back to text: {e}")
             
         return await self.publish_text(title, text)
-

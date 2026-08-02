@@ -138,3 +138,65 @@ async def test_pipeline_moderation_flow():
                 
         assert called_chat_id_check, "Did not send Telegram moderation notification to admin"
 
+
+@pytest.mark.asyncio
+async def test_pipeline_records_primary_publish_before_optional_threads_failure():
+    adapted = {"title": "Adapted", "text": "Adapted body"}
+
+    with patch(
+        "smm_engine.pipeline.run_all_scrapers",
+        new=AsyncMock(return_value=[]),
+    ), patch("smm_engine.pipeline.NewsScorer"), patch(
+        "smm_engine.pipeline.ContentAdapter"
+    ) as adapter_class, patch(
+        "smm_engine.pipeline.TelegramPublisher"
+    ) as telegram_class, patch(
+        "smm_engine.pipeline.ThreadsPublisher"
+    ) as threads_class:
+        adapter_class.return_value.adapt_news = AsyncMock(return_value=adapted)
+        telegram_class.return_value.publish_post_with_cover = AsyncMock(return_value=True)
+        threads_class.return_value.publish_post = AsyncMock(
+            side_effect=RuntimeError("optional channel unavailable")
+        )
+
+        pipeline = SMMPipeline()
+        item_id = pipeline.db.save_news_item(
+            "source",
+            "primary-side-effect",
+            "Original",
+            "https://example.com/story",
+            {},
+        )
+        pipeline.db.update_scoring(item_id, 100, "Excellent", status="parsed")
+
+        summary = await pipeline.run()
+        stored = pipeline.db.get_by_id(item_id)
+
+    assert stored["status"] == "published"
+    assert summary["published"] == 1
+
+
+@pytest.mark.asyncio
+async def test_production_moderation_notification_does_not_trust_legacy_admin(
+    monkeypatch,
+):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("TELEGRAM_ADMIN_CHAT_ID", raising=False)
+    pipeline = SMMPipeline()
+    pipeline.db.set_setting("admin_chat_id", "55555")
+
+    with patch("smm_engine.config.TELEGRAM_BOT_TOKEN", "token"), patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+    ) as post:
+        await pipeline._send_moderation_notification(
+            1,
+            "Title",
+            80,
+            "Reason",
+            "Adapted",
+            "Body",
+            "source",
+        )
+
+    post.assert_not_awaited()
