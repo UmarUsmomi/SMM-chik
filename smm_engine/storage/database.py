@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import contextvars
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import logging
@@ -148,6 +149,11 @@ class DatabaseManager:
                 key VARCHAR(100) PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS pipeline_leases (
+                name VARCHAR(100) PRIMARY KEY,
+                owner VARCHAR(64) NOT NULL,
+                locked_until DOUBLE PRECISION NOT NULL
+            );
             """
         else:
             create_table_sql = """
@@ -173,6 +179,11 @@ class DatabaseManager:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS pipeline_leases (
+                name TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                locked_until REAL NOT NULL
+            );
             """
         
         # Execute each statement separately for compatibility (especially with multiple statements in sqlite)
@@ -195,13 +206,67 @@ class DatabaseManager:
             try:
                 cursor.execute("ALTER TABLE news_items ENABLE ROW LEVEL SECURITY;")
                 cursor.execute("ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;")
-                logger.info("Successfully enabled Row Level Security (RLS) on tables news_items and app_settings.")
+                cursor.execute("ALTER TABLE pipeline_leases ENABLE ROW LEVEL SECURITY;")
+                logger.info("Successfully enabled Row Level Security (RLS) on application tables.")
             except Exception as e:
                 logger.warning(f"Could not enable Row Level Security (RLS) on tables: {e}")
 
         conn.commit()
         cursor.close()
         conn.close()
+
+    def acquire_lease(
+        self,
+        name: str,
+        owner: str,
+        ttl_seconds: float,
+    ) -> bool:
+        """Atomically acquire or take over an expired cross-process lease."""
+        if not name or len(name) > 100:
+            raise ValueError("Lease name must contain 1-100 characters")
+        if not owner or len(owner) > 64:
+            raise ValueError("Lease owner must contain 1-64 characters")
+        if ttl_seconds <= 0:
+            raise ValueError("Lease TTL must be positive")
+
+        now = time.time()
+        locked_until = now + float(ttl_seconds)
+        placeholder = "%s" if self.use_postgres else "?"
+        query = f"""
+            INSERT INTO pipeline_leases (name, owner, locked_until)
+            VALUES ({placeholder}, {placeholder}, {placeholder})
+            ON CONFLICT (name) DO UPDATE
+            SET owner = EXCLUDED.owner, locked_until = EXCLUDED.locked_until
+            WHERE pipeline_leases.locked_until <= {placeholder}
+        """
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, (name, owner, locked_until, now))
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            cursor.close()
+            conn.close()
+
+    def release_lease(self, name: str, owner: str) -> bool:
+        """Release a lease only when it is still owned by this caller."""
+        placeholder = "%s" if self.use_postgres else "?"
+        query = (
+            f"DELETE FROM pipeline_leases WHERE name = {placeholder} "
+            f"AND owner = {placeholder}"
+        )
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query, (name, owner))
+            conn.commit()
+            return cursor.rowcount == 1
+        finally:
+            cursor.close()
+            conn.close()
 
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Retrieves an application setting"""

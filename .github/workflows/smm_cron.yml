@@ -5,6 +5,10 @@ on:
     - cron: '0 */3 * * *'  # Every 3 hours
   workflow_dispatch:        # Manual execution also available
 
+concurrency:
+  group: smm-production-pipeline
+  cancel-in-progress: false
+
 jobs:
   # Keep Render.com free tier awake by pinging health endpoint
   keep-alive:
@@ -42,14 +46,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Check required secrets
-        id: check-secrets
+      - name: Check required production secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
         run: |
-          if [ -z "${{ secrets.GEMINI_API_KEY }}" ]; then
-            echo "has_gemini=false" >> $GITHUB_OUTPUT
-            echo "::warning::GEMINI_API_KEY is not set. Pipeline will run in dry-run mode."
-          else
-            echo "has_gemini=true" >> $GITHUB_OUTPUT
+          missing=()
+          for name in DATABASE_URL GEMINI_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_CHANNEL_ID TELEGRAM_ADMIN_CHAT_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing required production secrets: %s\n' "${missing[*]}"
+            exit 1
           fi
 
       - name: Run SMM Pipeline

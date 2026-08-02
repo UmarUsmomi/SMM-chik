@@ -283,6 +283,33 @@ def test_database_creates_indexes_for_dashboard_and_dedup_queries(tmp_path):
     assert "idx_news_items_status_score_created" in index_names
 
 
+def test_database_pipeline_lease_is_exclusive_and_recovers_after_expiry(tmp_path):
+    import sqlite3
+
+    from smm_engine.storage.database import DatabaseManager
+
+    database_path = tmp_path / "leases.db"
+    with patch("smm_engine.storage.database.SQLITE_DB_PATH", str(database_path)):
+        first = DatabaseManager()
+        assert first.acquire_lease("smm_pipeline", "first-owner", 60) is True
+        first.close_current()
+
+        second = DatabaseManager()
+        assert second.acquire_lease("smm_pipeline", "second-owner", 60) is False
+        assert second.release_lease("smm_pipeline", "second-owner") is False
+        second.close_current()
+
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE pipeline_leases SET locked_until = 0 WHERE name = ?",
+                ("smm_pipeline",),
+            )
+
+        assert second.acquire_lease("smm_pipeline", "second-owner", 60) is True
+        assert first.release_lease("smm_pipeline", "first-owner") is False
+        assert second.release_lease("smm_pipeline", "second-owner") is True
+
+
 def test_database_clear_and_reset_command(tmp_path):
     from smm_engine.storage.database import DatabaseManager
     from bot.app import app

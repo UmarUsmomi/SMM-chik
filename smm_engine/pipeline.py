@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 from typing import Any, Dict
 
 from smm_engine.config import SOURCES_CONFIG, AUTO_PUBLISH_THRESHOLD, QUEUE_THRESHOLD
@@ -14,6 +15,9 @@ from smm_engine.publishers.threads_pub import ThreadsPublisher
 
 logger = logging.getLogger(__name__)
 
+PIPELINE_LEASE_NAME = "smm_pipeline"
+PIPELINE_LEASE_TTL_SECONDS = 30 * 60
+
 class SMMPipeline:
     def __init__(self):
         self.db = DatabaseManager()
@@ -24,6 +28,36 @@ class SMMPipeline:
         self.threads_pub = ThreadsPublisher()
 
     async def run(self) -> Dict[str, Any]:
+        """Run at most one pipeline process against the shared database."""
+        lease_owner = uuid.uuid4().hex
+        if not self.db.acquire_lease(
+            PIPELINE_LEASE_NAME,
+            lease_owner,
+            PIPELINE_LEASE_TTL_SECONDS,
+        ):
+            logger.info("Another process holds the pipeline lease; skipping this run")
+            return {
+                "scraped": 0,
+                "duplicates": 0,
+                "processed": 0,
+                "queued": 0,
+                "published": 0,
+                "errors": 0,
+                "skipped": "already_running",
+            }
+
+        try:
+            return await self._run_once()
+        finally:
+            try:
+                self.db.release_lease(PIPELINE_LEASE_NAME, lease_owner)
+            except Exception as exc:
+                logger.error(
+                    "Failed to release the pipeline lease (%s); it will expire automatically",
+                    type(exc).__name__,
+                )
+
+    async def _run_once(self) -> Dict[str, Any]:
         """Runs one full cycle of the SMM pipeline"""
         logger.info("Starting SMM pipeline run...")
         

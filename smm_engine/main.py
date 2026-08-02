@@ -1,6 +1,7 @@
 import asyncio
-import sys
 import logging
+import os
+import sys
 from smm_engine.config import check_required_env
 from smm_engine.pipeline import SMMPipeline
 
@@ -14,8 +15,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger("smm_engine.main")
 
+PRODUCTION_PIPELINE_REQUIRED_ENVIRONMENT = (
+    "DATABASE_URL",
+    "GEMINI_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHANNEL_ID",
+    "TELEGRAM_ADMIN_CHAT_ID",
+)
+
+
+def _missing_production_configuration():
+    environment = (os.getenv("ENVIRONMENT") or "").strip().lower()
+    is_production = environment in {"production", "prod"} or bool(
+        os.getenv("RENDER_EXTERNAL_URL")
+    )
+    if not is_production:
+        return []
+    return [
+        name
+        for name in PRODUCTION_PIPELINE_REQUIRED_ENVIRONMENT
+        if not (os.getenv(name) or "").strip()
+    ]
+
 async def main():
     logger.info("Initializing SMM Automator Engine...")
+
+    production_missing = _missing_production_configuration()
+    if production_missing:
+        logger.critical(
+            "Production pipeline configuration is incomplete: %s",
+            ", ".join(production_missing),
+        )
+        raise SystemExit(1)
     
     # Check environment variables
     missing_vars = check_required_env()

@@ -177,6 +177,43 @@ async def test_pipeline_records_primary_publish_before_optional_threads_failure(
 
 
 @pytest.mark.asyncio
+async def test_pipeline_skips_when_another_process_holds_the_database_lease():
+    with patch(
+        "smm_engine.pipeline.run_all_scrapers",
+        new=AsyncMock(return_value=[]),
+    ) as run_scrapers:
+        pipeline = SMMPipeline()
+        pipeline.db.acquire_lease = MagicMock(return_value=False)
+
+        summary = await pipeline.run()
+
+    run_scrapers.assert_not_awaited()
+    assert summary == {
+        "scraped": 0,
+        "duplicates": 0,
+        "processed": 0,
+        "queued": 0,
+        "published": 0,
+        "errors": 0,
+        "skipped": "already_running",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pipeline_releases_database_lease_after_unhandled_failure():
+    pipeline = SMMPipeline()
+    pipeline._run_once = AsyncMock(side_effect=RuntimeError("unexpected failure"))
+
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        await pipeline.run()
+
+    pipeline.db.close_current()
+    contender = SMMPipeline()
+    assert contender.db.acquire_lease("smm_pipeline", "contender", 60) is True
+    assert contender.db.release_lease("smm_pipeline", "contender") is True
+
+
+@pytest.mark.asyncio
 async def test_production_moderation_notification_does_not_trust_legacy_admin(
     monkeypatch,
 ):
